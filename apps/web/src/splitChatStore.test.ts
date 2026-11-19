@@ -81,6 +81,37 @@ describe("splitChatStore", () => {
     expect(useSplitChatStore.getState().secondaryPanes).toHaveLength(5);
   });
 
+  it("opens a new chat in the focused pane and reuses its existing tabs", () => {
+    const store = useSplitChatStore.getState();
+    expect(store.openInTab(thread3, thread2)).toBe(false);
+    expect(store.openToSide(thread3, thread2)).toBe(true);
+    expect(store.openInTab(thread4, thread2)).toBe(true);
+    expect(useSplitChatStore.getState()).toMatchObject({
+      secondaryPanes: [thread4],
+      activePaneIndex: 1,
+      tabGroups: [[thread3, thread4]],
+    });
+    expect(store.openInTab(thread3, thread2)).toBe(true);
+    expect(useSplitChatStore.getState().secondaryPanes).toEqual([thread3]);
+    expect(store.openToSide(thread4, thread2)).toBe(true);
+    expect(useSplitChatStore.getState().secondaryPanes).toEqual([thread4]);
+  });
+
+  it("keeps the primary tab group when the caller navigates to a new draft", () => {
+    const store = useSplitChatStore.getState();
+    const draft: ThreadRouteTarget = { kind: "draft", draftId: "new-draft" as DraftId };
+    store.openToSide(thread3, thread2);
+    store.setActivePane(0);
+    expect(store.openInTab(draft, thread2)).toBe(false);
+    expect(useSplitChatStore.getState()).toMatchObject({
+      secondaryPanes: [thread3],
+      activePaneIndex: 0,
+      tabGroups: [[thread2, draft]],
+    });
+    expect(store.openInTab(thread2, draft)).toBe(false);
+    expect(useSplitChatStore.getState().tabGroups).toEqual([[thread2, draft]]);
+  });
+
   it("resizes each row and column independently", () => {
     const store = useSplitChatStore.getState();
     store.setTopRowRatio(0.3);

@@ -12,15 +12,25 @@ export function SplitChatDragHandle({
   onDrop,
   onEnd,
   onMoveByKeyboard,
+  tab,
 }: {
   readonly target: ThreadRouteTarget;
   readonly onMove: (point: { x: number; y: number }, title: string) => void;
   readonly onDrop: (point: { x: number; y: number }) => void;
   readonly onEnd: () => void;
   readonly onMoveByKeyboard: (direction: number) => void;
+  readonly tab?: {
+    readonly key: string;
+    readonly selected: boolean;
+    readonly onSelect: () => void;
+    readonly onClose?: (() => void) | undefined;
+    readonly id: string;
+    readonly panelId: string;
+  };
 }) {
   const thread = useQuietThreadShell(target.kind === "server" ? target.threadRef : null);
   const title = thread?.title || "New thread";
+  const dragged = useRef(false);
   const cleanupRef = useRef<(() => void) | null>(null);
   const move = useStableCallback(onMove);
   const drop = useStableCallback(onDrop);
@@ -32,11 +42,31 @@ export function SplitChatDragHandle({
   return (
     <Button
       ref={handleRef}
-      variant="ghost"
-      size="icon-xs"
-      aria-label="Drag chat to rearrange"
-      title="Drag chat to rearrange. Use the arrow keys to move it."
+      variant={tab?.selected ? "secondary" : "ghost"}
+      size={tab ? "xs" : "icon-xs"}
+      role={tab ? "tab" : undefined}
+      id={tab?.id}
+      aria-controls={tab?.panelId}
+      data-split-chat-tab={tab?.key}
+      aria-selected={tab?.selected}
+      tabIndex={tab ? (tab.selected ? 0 : -1) : undefined}
+      aria-label={tab ? title : "Drag chat to rearrange"}
+      title={tab ? title : "Drag chat to rearrange. Use the arrow keys to move it."}
+      className={tab ? "h-6 max-w-48 shrink-0 cursor-grab" : undefined}
+      onClick={(event) => {
+        if (tab && (!dragged.current || event.detail === 0)) {
+          event.currentTarget.focus({ preventScroll: true });
+          tab.onSelect();
+        }
+        dragged.current = false;
+      }}
       onKeyDown={(event) => {
+        if (tab && event.key === "Delete" && tab.onClose) {
+          event.preventDefault();
+          event.stopPropagation();
+          tab.onClose();
+          return;
+        }
         if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
         event.preventDefault();
         event.stopPropagation();
@@ -44,7 +74,8 @@ export function SplitChatDragHandle({
       }}
       onPointerDown={(event) => {
         if (event.button !== 0 || cleanupRef.current) return;
-        event.preventDefault();
+        dragged.current = false;
+        if (!tab) event.preventDefault();
         event.stopPropagation();
         const origin = { x: event.clientX, y: event.clientY };
         const pointerId = event.pointerId;
@@ -76,6 +107,7 @@ export function SplitChatDragHandle({
           point = { x: next.clientX, y: next.clientY };
           if (!started && Math.hypot(point.x - origin.x, point.y - origin.y) < 6) return;
           started = true;
+          dragged.current = true;
           document.body.style.cursor = "grabbing";
           document.body.style.userSelect = "none";
           if (frame === null) frame = requestAnimationFrame(flush);
@@ -106,7 +138,7 @@ export function SplitChatDragHandle({
         handle.addEventListener("lostpointercapture", cancel);
       }}
     >
-      <GripVertical />
+      {tab ? <span className="truncate">{title}</span> : <GripVertical />}
     </Button>
   );
 }

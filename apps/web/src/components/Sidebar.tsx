@@ -116,7 +116,12 @@ import {
   getSidebarProjectSettingsKey,
   type SidebarProjectSnapshot,
 } from "../sidebarProjectGrouping";
-import { MAX_SPLIT_CHATS, useSplitChatStore } from "../splitChatStore";
+import {
+  MAX_SPLIT_CHATS,
+  tabsForPane,
+  threadTargetKey,
+  useSplitChatStore,
+} from "../splitChatStore";
 import { resolveProjectExpanded, useUiStateStore } from "../uiStateStore";
 import {
   getThreadKeysToDeselectAfterDelete,
@@ -1443,13 +1448,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return mapping;
   })();
 
-  const navigateToThread = (threadRef: ScopedThreadRef) => {
+  const navigateToThread = (threadRef: ScopedThreadRef, forceRoute = false) => {
     if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
       clearSelection();
     }
     setSelectionAnchor(scopedThreadKey(threadRef));
     if (isMobile) {
       setOpenMobile(false);
+    }
+    if (
+      !forceRoute &&
+      useSplitChatStore.getState().openInTab({ kind: "server", threadRef }, routeTarget)
+    ) {
+      return Promise.resolve();
     }
     return router.navigate({
       to: "/$environmentId/$threadId",
@@ -1467,7 +1478,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (landedBefore) return;
 
     try {
-      await navigateToThread(threadRef);
+      await navigateToThread(threadRef, true);
       const landed =
         router.buildLocation({
           to: "/$environmentId/$threadId",
@@ -1484,7 +1495,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (isMobile) {
       setOpenMobile(false);
     }
-    void router.navigate({ to: "/draft/$draftId", params: { draftId } });
+    if (!useSplitChatStore.getState().openInTab({ kind: "draft", draftId }, routeTarget)) {
+      void router.navigate({ to: "/draft/$draftId", params: { draftId } });
+    }
   };
 
   const clearThreadSearch = () => {
@@ -2711,14 +2724,22 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               void navigateToThread(threadRef);
               return;
             }
-            const opened = useSplitChatStore
-              .getState()
-              .openToSide({ kind: "server", threadRef }, routeTarget);
+            const split = useSplitChatStore.getState();
+            const target = { kind: "server", threadRef } as const;
+            if (
+              tabsForPane(split.tabGroups, routeTarget).some(
+                (tab) => threadTargetKey(tab) === threadTargetKey(target),
+              )
+            ) {
+              void navigateToThread(threadRef);
+              return;
+            }
+            const opened = split.openToSide(target, routeTarget);
             if (!opened) {
               toastManager.add({
                 type: "info",
                 title: "Split chat limit reached",
-                description: `You can open up to ${MAX_SPLIT_CHATS} chats simultaneously.`,
+                description: `You can open up to ${MAX_SPLIT_CHATS} chat panes simultaneously.`,
               });
             }
             return;

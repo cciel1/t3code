@@ -25,7 +25,15 @@ export function threadTargetKey(target: ThreadRouteTarget | null | undefined): s
   return promoted ? scopedThreadKey(promoted) : `draft:${target.draftId}`;
 }
 
+export type SplitChatTabGroups = readonly (readonly ThreadRouteTarget[])[];
+
+export function tabsForPane(groups: SplitChatTabGroups, target: ThreadRouteTarget) {
+  const key = threadTargetKey(target);
+  return groups.find((tabs) => tabs.some((tab) => threadTargetKey(tab) === key)) ?? [target];
+}
+
 interface SplitChatState {
+  readonly tabGroups: SplitChatTabGroups;
   readonly secondaryPanes: readonly ThreadRouteTarget[];
   readonly activePaneIndex: number;
 
@@ -36,10 +44,13 @@ interface SplitChatState {
   readonly rightColumnRatio: number;
   readonly resizeLayout: "rows" | "columns";
 
+  // Returns true when the caller can skip navigation because the pane already displays the target.
+  readonly openInTab: (target: ThreadRouteTarget, primary: ThreadRouteTarget | null) => boolean;
   readonly openToSide: (target: ThreadRouteTarget, primary?: ThreadRouteTarget | null) => boolean;
   readonly replaceSecondaryPanes: (
     panes: readonly ThreadRouteTarget[],
     activeIndex: number,
+    tabGroups?: SplitChatTabGroups,
   ) => void;
   readonly setActivePane: (index: number) => void;
   readonly setHorizontalRatio: (ratio: number) => void;
@@ -63,6 +74,7 @@ export const useSplitChatStore = create<SplitChatState>()(
   persist(
     (set, get) => ({
       secondaryPanes: [],
+      tabGroups: [],
       activePaneIndex: 0,
       horizontalRatio: DEFAULT_RATIO,
       verticalRatio: DEFAULT_RATIO,
@@ -71,20 +83,62 @@ export const useSplitChatStore = create<SplitChatState>()(
       rightColumnRatio: DEFAULT_RATIO,
       resizeLayout: "rows",
 
+      openInTab: (target, primary) => {
+        const state = get();
+        if (!primary || (!state.secondaryPanes.length && !state.tabGroups.length)) return false;
+        const key = threadTargetKey(target);
+        const primaryTabs = tabsForPane(state.tabGroups, primary);
+        if (!state.secondaryPanes.length && primaryTabs.length === 1) return false;
+        const panes = [primary, ...state.secondaryPanes];
+        const existing = panes.findIndex((pane) =>
+          tabsForPane(state.tabGroups, pane).some((tab) => threadTargetKey(tab) === key),
+        );
+        const index = existing < 0 ? Math.min(state.activePaneIndex, panes.length - 1) : existing;
+        const pane = panes[index]!;
+        let tabGroups = state.tabGroups;
+        if (existing < 0) {
+          const tabs = tabsForPane(tabGroups, pane);
+          const previousGroup = tabGroups.find((group) =>
+            group.some((tab) => threadTargetKey(tab) === key),
+          );
+          const previousTabs = previousGroup?.filter((tab) => threadTargetKey(tab) !== key) ?? [];
+          tabGroups = [
+            ...tabGroups.filter((group) => group !== tabs && group !== previousGroup),
+            [...tabs, target],
+            ...(previousTabs.length > 1 ? [previousTabs] : []),
+          ];
+        }
+        if (index === 0) {
+          set({ activePaneIndex: index, tabGroups });
+          return key === threadTargetKey(primary);
+        }
+        const secondaryPanes = [...state.secondaryPanes];
+        if (threadTargetKey(secondaryPanes[index - 1]) !== key) {
+          secondaryPanes[index - 1] = target;
+        }
+        set({ secondaryPanes, activePaneIndex: index, tabGroups });
+        return true;
+      },
+
       openToSide: (target, primary) => {
         const state = get();
         const targetKey = threadTargetKey(target);
         if (!targetKey) return false;
-        if (targetKey === threadTargetKey(primary)) {
+        if (
+          primary &&
+          tabsForPane(state.tabGroups, primary).some((tab) => threadTargetKey(tab) === targetKey)
+        ) {
           set({ activePaneIndex: 0 });
           return true;
         }
 
-        const existingIndex = state.secondaryPanes.findIndex(
-          (pane) => threadTargetKey(pane) === targetKey,
+        const existingIndex = state.secondaryPanes.findIndex((pane) =>
+          tabsForPane(state.tabGroups, pane).some((tab) => threadTargetKey(tab) === targetKey),
         );
         if (existingIndex !== -1) {
-          set({ activePaneIndex: existingIndex + 1 });
+          const panes = [...state.secondaryPanes];
+          if (threadTargetKey(panes[existingIndex]) !== targetKey) panes[existingIndex] = target;
+          set({ secondaryPanes: panes, activePaneIndex: existingIndex + 1 });
           return true;
         }
 
@@ -100,12 +154,16 @@ export const useSplitChatStore = create<SplitChatState>()(
         return true;
       },
 
-      replaceSecondaryPanes: (secondaryPanes, activePaneIndex) => {
-        set({ secondaryPanes: secondaryPanes.slice(0, MAX_SPLIT_CHATS - 1), activePaneIndex });
+      replaceSecondaryPanes: (secondaryPanes, activePaneIndex, tabGroups = get().tabGroups) => {
+        set({
+          secondaryPanes: secondaryPanes.slice(0, MAX_SPLIT_CHATS - 1),
+          activePaneIndex,
+          tabGroups,
+        });
       },
 
       setActivePane: (index: number) => {
-        set({ activePaneIndex: index });
+        if (get().activePaneIndex !== index) set({ activePaneIndex: index });
       },
 
       setHorizontalRatio: (ratio: number) => {

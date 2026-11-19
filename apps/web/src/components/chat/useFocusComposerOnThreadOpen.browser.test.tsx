@@ -21,6 +21,9 @@ function ThreadProbe(props: { threadId: string }) {
       <div data-sidebar-row="thread:beta">
         <input aria-label="Thread title" />
       </div>
+      <button type="button" data-split-chat-tab="beta">
+        Beta tab
+      </button>
       <textarea aria-label="Message" ref={composerRef} />
     </div>
   );
@@ -42,4 +45,15 @@ it("keeps the sidebar rename input when a double-click opens another thread", as
   await screen.rerender(<ThreadProbe threadId="beta" />);
   await act(() => vi.advanceTimersToNextFrame());
   await expect.element(renameInput).toHaveFocus();
+});
+
+it("keeps focus on the split tab when its chat opens", async () => {
+  using _frames = fakeTimers();
+  await using screen = await render(<ThreadProbe threadId="alpha" />, { router: false });
+  await act(() => vi.advanceTimersToNextFrame());
+  const tab = screen.getByRole("button", { name: "Beta tab" });
+  tab.element().focus();
+  await screen.rerender(<ThreadProbe threadId="beta" />);
+  await act(() => vi.advanceTimersToNextFrame());
+  await expect.element(tab).toHaveFocus();
 });

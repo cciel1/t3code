@@ -17,10 +17,12 @@ export function useFocusComposerOnThreadOpen(
     let frame: number | undefined;
     const leave = restoreFocusOnThreadEnter(threadRef, {
       root,
+      preserveFocus: root.ownerDocument.activeElement?.matches("[data-split-chat-tab]") === true,
       focusComposer: () => {
         frame = window.requestAnimationFrame(() => {
           // Double-clicking a sidebar row opens its thread and its rename field in one gesture.
-          if (document.activeElement?.matches("[data-sidebar-row] input")) return;
+          if (document.activeElement?.matches("[data-sidebar-row] input, [data-split-chat-tab]"))
+            return;
           focusComposer();
         });
       },

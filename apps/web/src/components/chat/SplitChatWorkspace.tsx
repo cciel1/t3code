@@ -1,14 +1,29 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
 import { Columns2, Maximize2, Minimize2, Rows2, X } from "lucide-react";
-import { memo, type CSSProperties, useRef, useState, useEffect, useLayoutEffect } from "react";
+import {
+  Fragment,
+  memo,
+  type CSSProperties,
+  useRef,
+  useState,
+  useEffect,
+  useLayoutEffect,
+  useId,
+} from "react";
 
 import "./SplitChatWorkspace.css";
 
 import { ComposerHandleContext, useComposerHandleContext } from "../../composerHandleContext";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { cn } from "../../lib/utils";
-import { MAX_SPLIT_CHATS, threadTargetKey, useSplitChatStore } from "../../splitChatStore";
+import {
+  MAX_SPLIT_CHATS,
+  tabsForPane,
+  threadTargetKey,
+  useSplitChatStore,
+  type SplitChatTabGroups,
+} from "../../splitChatStore";
 import { buildThreadRouteParams, type ThreadRouteTarget } from "../../threadRoutes";
 import { ThreadRouteView } from "../ThreadRouteView";
 import { Button } from "../ui/button";
@@ -35,16 +50,42 @@ function paneKey(target: ThreadRouteTarget | undefined): string {
   return target.kind === "server" ? scopedThreadKey(target.threadRef) : `draft:${target.draftId}`;
 }
 
+type DropZone =
+  | { index: number; mode: "swap" | "insert" | "blocked" }
+  | { index: number; mode: "tab"; tabIndex: number };
+
+function replaceGroups(
+  groups: SplitChatTabGroups,
+  affected: SplitChatTabGroups,
+  replacements: SplitChatTabGroups,
+): SplitChatTabGroups {
+  return [
+    ...groups.filter((group) => !affected.includes(group)),
+    ...replacements.filter((tabs) => tabs.length > 1),
+  ];
+}
+
+function distinctPanes(all: readonly ThreadRouteTarget[], groups: SplitChatTabGroups) {
+  return all.filter((pane, index) => {
+    const tabs = tabsForPane(groups, pane);
+    return !all
+      .slice(0, index)
+      .some((other) => tabs.some((tab) => threadTargetKey(tab) === threadTargetKey(other)));
+  });
+}
+
 export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   primaryTarget,
   modalOpen,
 }: SplitChatWorkspaceProps) {
   const navigate = useNavigate();
+  const workspaceId = useId();
   const composerHandle = useComposerHandleContext();
   const animations = usePanelAnimationSettings();
   const store = useSplitChatStore();
   const {
     secondaryPanes,
+    tabGroups,
     activePaneIndex,
     horizontalRatio,
     verticalRatio,
@@ -56,15 +97,12 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   const [maximizedPaneIndex, setMaximizedPaneIndex] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<ThreadRouteTarget | null>(null);
-  const focusTargetRef = useRef<string | null>(null);
+  const focusTargetRef = useRef<{ key: string; tab?: boolean } | null>(null);
   const [pendingPrimary, setPendingPrimary] = useState<{
     previousKey: string;
     target: ThreadRouteTarget;
   } | null>(null);
-  const [dropZone, setDropZone] = useState<{
-    index: number;
-    mode: "swap" | "insert" | "blocked";
-  } | null>(null);
+  const [dropZone, setDropZone] = useState<DropZone | null>(null);
   const primaryKey = threadTargetKey(primaryTarget);
   const effectivePrimary =
     pendingPrimary && primaryKey === pendingPrimary.previousKey
@@ -73,11 +111,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   if (pendingPrimary && primaryKey !== pendingPrimary.previousKey) setPendingPrimary(null);
 
   const allPanes = effectivePrimary ? [effectivePrimary, ...secondaryPanes] : [...secondaryPanes];
-  const panes = allPanes.filter(
-    (pane, index) =>
-      allPanes.findIndex((candidate) => threadTargetKey(candidate) === threadTargetKey(pane)) ===
-      index,
-  );
+  const panes = distinctPanes(allPanes, tabGroups);
   const count = panes.length;
   if (count < 2 && maximizedPaneIndex !== null) setMaximizedPaneIndex(null);
   const maximized =
@@ -141,87 +175,220 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
       void navigate({ to: "/draft/$draftId", params: { draftId: target.draftId }, replace: true });
     }
   };
-  // Reads the live store so several panes closing in one commit don't restore each other.
-  const close = (key: string) => {
+  const commitPanes = (
+    next: readonly ThreadRouteTarget[],
+    groups: SplitChatTabGroups,
+    active: number,
+    focus?: { key: string; tab?: boolean },
+  ) => {
+    const nextPrimary = next[0];
+    if (!nextPrimary) return false;
+    if (threadTargetKey(nextPrimary) !== threadTargetKey(effectivePrimary))
+      navigatePrimary(nextPrimary);
+    if (focus) focusTargetRef.current = focus;
+    store.replaceSecondaryPanes(next.slice(1), active, groups);
+    return true;
+  };
+
+  // Reads the live store so several unavailable panes closing together don't restore each other.
+  const close = (key: string, focusTab = false) => {
     const latest = useSplitChatStore.getState();
-    const current = effectivePrimary
-      ? [effectivePrimary, ...latest.secondaryPanes]
-      : [...latest.secondaryPanes];
-    const index = current.findIndex((pane) => threadTargetKey(pane) === key);
-    if (index < 0) return;
+    const groups = latest.tabGroups;
+    const current = distinctPanes(
+      effectivePrimary ? [effectivePrimary, ...latest.secondaryPanes] : latest.secondaryPanes,
+      groups,
+    );
+    const index = current.findIndex((pane) =>
+      tabsForPane(groups, pane).some((tab) => threadTargetKey(tab) === key),
+    );
+    const pane = current[index];
+    if (!pane) return;
+    const tabs = tabsForPane(groups, pane);
+    const tabIndex = tabs.findIndex((tab) => threadTargetKey(tab) === key);
+    const remainingTabs = tabs.filter((_, i) => i !== tabIndex);
+    if (remainingTabs.length) {
+      const next = [...current];
+      const selected =
+        threadTargetKey(pane) === key
+          ? remainingTabs[Math.min(tabIndex, remainingTabs.length - 1)]!
+          : pane;
+      next[index] = selected;
+      commitPanes(
+        next,
+        replaceGroups(groups, [tabs], [remainingTabs]),
+        latest.activePaneIndex,
+        focusTab ? { key: paneKey(selected), tab: true } : undefined,
+      );
+      return;
+    }
+    if (current.length < 2) return;
     setMaximizedPaneIndex((value) =>
       value === null || value === index ? null : value > index ? value - 1 : value,
     );
     const next = current.filter((_, paneIndex) => paneIndex !== index);
-    const nextPrimary = next[0];
-    if (!nextPrimary) return;
-    const activeIndex = latest.activePaneIndex;
     const active =
-      activeIndex > index
-        ? activeIndex - 1
-        : activeIndex === index
-          ? Math.min(index, next.length - 1)
-          : activeIndex;
-    if (index === 0) navigatePrimary(nextPrimary);
-    if (activeIndex === index) focusTargetRef.current = paneKey(next[active]);
-    store.replaceSecondaryPanes(next.slice(1), active);
+      latest.activePaneIndex > index
+        ? latest.activePaneIndex - 1
+        : Math.min(latest.activePaneIndex, next.length - 1);
+    commitPanes(
+      next,
+      groups,
+      active,
+      latest.activePaneIndex === index ? { key: paneKey(next[active]) } : undefined,
+    );
   };
+
+  const selectTab = (index: number, target: ThreadRouteTarget) => {
+    const next = [...panes];
+    next[index] = target;
+    commitPanes(next, tabGroups, index, { key: paneKey(target), tab: true });
+  };
+
   const resolveDrop = (
     point: { x: number; y: number },
     target: ThreadRouteTarget | null,
     multiple = false,
-  ) => {
+  ): DropZone | null => {
     const container = containerRef.current;
-    if (!container || modalOpen || maximized !== null) return null;
+    if (!container || modalOpen) return null;
     const rect = container.getBoundingClientRect();
     if (point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom)
       return null;
-    const source = panes.findIndex((pane) => threadTargetKey(pane) === threadTargetKey(target));
-    if (multiple || (source < 0 && count >= MAX_SPLIT_CHATS))
-      return { index: 0, mode: "blocked" as const };
-    const paneElements = container.querySelectorAll<HTMLElement>("[data-split-pane-index]");
-    let index = Array.from(paneElements).findIndex((pane) => {
+    const paneElements = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-split-pane-index]:not([hidden])"),
+    );
+    const element = paneElements.find((pane) => {
       const box = pane.getBoundingClientRect();
       return (
         point.x >= box.left && point.x <= box.right && point.y >= box.top && point.y <= box.bottom
       );
     });
-    if (index < 0) return null;
-    if (source >= 0) return source === index ? null : { index, mode: "swap" as const };
+    if (!element) return null;
+    let index = Number(element.dataset.splitPaneIndex);
+    if (multiple) return { index, mode: "blocked" };
+    const key = threadTargetKey(target);
+    const source = panes.findIndex((pane) =>
+      tabsForPane(tabGroups, pane).some((tab) => threadTargetKey(tab) === key),
+    );
+    const sourcePane = panes[source];
+    const sourceTabs = sourcePane ? tabsForPane(tabGroups, sourcePane) : [];
+    const strip = element.querySelector<HTMLElement>("[data-split-tab-strip]");
+    const header = strip?.getBoundingClientRect();
+    if (header && point.y <= header.bottom) {
+      const buttons = Array.from(strip!.querySelectorAll<HTMLElement>("[data-split-chat-tab]"));
+      const before = buttons.findIndex((tab) => {
+        const box = tab.getBoundingClientRect();
+        return point.x < box.left + box.width / 2;
+      });
+      const tabIndex = before < 0 ? buttons.length : before;
+      if (source === index) {
+        const from = sourceTabs.findIndex((tab) => threadTargetKey(tab) === key);
+        if (tabIndex === from || tabIndex === from + 1) return null;
+      }
+      return { index, mode: "tab", tabIndex };
+    }
+    if (maximized !== null) return null;
+    if (sourceTabs.length === 1) return source === index ? null : { index, mode: "swap" };
+    if (count >= MAX_SPLIT_CHATS) return { index, mode: "blocked" };
+    if (sourceTabs.length > 1) {
+      const pane = element.getBoundingClientRect();
+      const splitAfter = point.x > pane.left + pane.width / 2;
+      return { index: index + Number(splitAfter), mode: "insert" };
+    }
     if (count === 1) index = point.x < rect.left + rect.width / 2 ? 0 : 1;
     if (count === 2 && point.y > rect.top + rect.height * 0.75) index = 2;
     if (count === 3 && index === 2 && point.x > rect.left + rect.width * bottomRowRatio) index = 3;
-    return { index, mode: "insert" as const };
+    return { index, mode: "insert" };
   };
-  const place = (target: ThreadRouteTarget, zone: NonNullable<typeof dropZone>) => {
+
+  const place = (target: ThreadRouteTarget, zone: DropZone) => {
     if (zone.mode === "blocked") return false;
+    const key = threadTargetKey(target);
     const next = [...panes];
-    const source = next.findIndex((pane) => threadTargetKey(pane) === threadTargetKey(target));
-    if (source >= 0) {
+    const source = next.findIndex((pane) =>
+      tabsForPane(tabGroups, pane).some((tab) => threadTargetKey(tab) === key),
+    );
+    const sourcePane = next[source];
+    const sourceTabs = sourcePane ? tabsForPane(tabGroups, sourcePane) : [];
+    const sourceIndex = sourceTabs.findIndex((tab) => threadTargetKey(tab) === key);
+    const remainingTabs = sourceTabs.filter((_, i) => i !== sourceIndex);
+    let groups = tabGroups;
+    let destinationIndex = zone.index;
+
+    if (zone.mode === "swap") {
+      const destination = next[zone.index];
+      if (!sourcePane || !destination) return false;
+      next[source] = destination;
+      next[zone.index] = sourcePane;
+    } else if (zone.mode === "tab") {
       const destination = next[zone.index];
       if (!destination) return false;
-      next[source] = destination;
+      const destinationTabs = tabsForPane(groups, destination);
+      const merged = source === zone.index ? [...remainingTabs] : [...destinationTabs];
+      const at =
+        source === zone.index && sourceIndex < zone.tabIndex ? zone.tabIndex - 1 : zone.tabIndex;
+      merged.splice(at, 0, target);
       next[zone.index] = target;
+      groups = replaceGroups(
+        groups,
+        [sourceTabs, destinationTabs],
+        source === zone.index ? [merged] : [merged, remainingTabs],
+      );
+      if (sourcePane && source !== zone.index) {
+        if (remainingTabs.length) {
+          if (threadTargetKey(sourcePane) === key) {
+            next[source] = remainingTabs[Math.min(sourceIndex, remainingTabs.length - 1)]!;
+          }
+        } else {
+          next.splice(source, 1);
+          if (source < zone.index) destinationIndex--;
+          setMaximizedPaneIndex((value) => (value === null ? null : destinationIndex));
+        }
+      }
     } else {
       if (next.length >= MAX_SPLIT_CHATS) return false;
+      if (sourcePane && remainingTabs.length) {
+        if (threadTargetKey(sourcePane) === key) {
+          next[source] = remainingTabs[Math.min(sourceIndex, remainingTabs.length - 1)]!;
+        }
+        groups = replaceGroups(groups, [sourceTabs], [remainingTabs]);
+      } else if (!sourcePane) {
+        // A sidebar drag can reopen a tab from a group whose pane isn't currently visible.
+        const previousGroup = tabsForPane(groups, target);
+        groups = replaceGroups(
+          groups,
+          [previousGroup],
+          [previousGroup.filter((tab) => threadTargetKey(tab) !== key)],
+        );
+      }
       next.splice(zone.index, 0, target);
     }
-    const nextPrimary = next[0];
-    if (!nextPrimary) return false;
-    if (threadTargetKey(nextPrimary) !== threadTargetKey(effectivePrimary))
-      navigatePrimary(nextPrimary);
-    focusTargetRef.current = paneKey(target);
-    store.replaceSecondaryPanes(next.slice(1), zone.index);
+    if (zone.mode === "tab" && !sourcePane) {
+      const previousGroup = tabsForPane(tabGroups, target);
+      groups = replaceGroups(
+        groups,
+        [previousGroup],
+        [previousGroup.filter((tab) => threadTargetKey(tab) !== key)],
+      );
+    }
     setDropZone(null);
-    return true;
+    return commitPanes(next, groups, destinationIndex, {
+      key: paneKey(target),
+      tab: zone.mode !== "swap",
+    });
   };
+
   const showDrop = useStableCallback(
     (point: { x: number; y: number } | null, targets: readonly ThreadRouteTarget[]) => {
       const next = point
         ? resolveDrop(point, sourceRef.current ?? targets[0] ?? null, targets.length > 1)
         : null;
       setDropZone((previous) =>
-        previous?.index === next?.index && previous?.mode === next?.mode ? previous : next,
+        previous?.index === next?.index &&
+        previous?.mode === next?.mode &&
+        (previous?.mode !== "tab" || (next?.mode === "tab" && previous.tabIndex === next.tabIndex))
+          ? previous
+          : next,
       );
     },
   );
@@ -269,10 +436,15 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     if (!key) return;
     const pane = Array.from(
       containerRef.current?.querySelectorAll<HTMLElement>("[data-split-pane-key]") ?? [],
-    ).find((element) => element.dataset.splitPaneKey === key);
+    ).find((element) => element.dataset.splitPaneKey === key.key);
     if (!pane) return;
     focusTargetRef.current = null;
-    const handle = pane.querySelector<HTMLElement>('[aria-label="Drag chat to rearrange"]');
+    const handle = pane.querySelector<HTMLElement>(
+      key.tab
+        ? '[data-split-chat-tab][aria-selected="true"]'
+        : '[aria-label="Drag chat to rearrange"]',
+    );
+    if (key.tab) handle?.scrollIntoView({ block: "nearest", inline: "nearest" });
     (handle ?? pane).focus({ preventScroll: true });
   });
 
@@ -315,88 +487,131 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
           } as CSSProperties
         }
       >
-        {panes.map((target, index) => (
-          <div
-            // The primary pane keeps one key so draft promotion keeps its ChatView mounted.
-            key={index === 0 ? "primary" : paneKey(target)}
-            data-split-pane-index={index}
-            data-split-pane-key={paneKey(target)}
-            tabIndex={-1}
-            hidden={maximized !== null && maximized !== index}
-            style={{
-              ...(maximized === index
-                ? { left: 0, top: 0, width: "100%", height: "100%" }
-                : bounds[index]),
-              animationDuration: animations.active
-                ? `${Math.min(animations.durationMs, 160)}ms`
-                : "0ms",
-            }}
-            className={cn("absolute min-h-0 min-w-0", count > 1 && "p-1")}
-            onPointerDown={() => store.setActivePane(index)}
-            onFocusCapture={() => store.setActivePane(index)}
-          >
+        {panes.map((target, index) => {
+          const tabs = tabsForPane(tabGroups, target);
+          const activeTabKey = threadTargetKey(target);
+          // A secondary pane keeps its DOM and focus when a different tab in it is selected.
+          const paneIdentity = tabs.map(paneKey).sort()[0];
+          const panelId = `${workspaceId}-pane-${index}`;
+          const tabId = (tabIndex: number) => `${panelId}-tab-${tabIndex}`;
+          const selectedTabIndex = tabs.findIndex((tab) => threadTargetKey(tab) === activeTabKey);
+          const dragCallbacks = (dragTarget: ThreadRouteTarget) => ({
+            onMove: (point: { x: number; y: number }, title: string) => {
+              sourceRef.current = dragTarget;
+              moveThreadContextDrag(point, { title, count: 1, pane: true });
+            },
+            onDrop: (point: { x: number; y: number }) => {
+              sourceRef.current = dragTarget;
+              dropThread(point, [dragTarget]);
+            },
+            onEnd: () => {
+              sourceRef.current = null;
+              endThreadContextDrag();
+            },
+          });
+          return (
             <div
-              className={cn(
-                "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background",
-                count > 1 &&
-                  "rounded-lg border transition-colors duration-150 motion-reduce:transition-none",
-                count > 1 && (activePaneIndex === index ? "border-primary/40" : "border-border"),
-              )}
+              // The primary pane keeps one key so draft promotion keeps its ChatView mounted.
+              key={index === 0 ? "primary" : paneIdentity}
+              data-split-pane-index={index}
+              data-split-pane-key={paneKey(target)}
+              tabIndex={-1}
+              hidden={maximized !== null && maximized !== index}
+              style={{
+                ...(maximized === index
+                  ? { left: 0, top: 0, width: "100%", height: "100%" }
+                  : bounds[index]),
+                animationDuration: animations.active
+                  ? `${Math.min(animations.durationMs, 160)}ms`
+                  : "0ms",
+              }}
+              className={cn("absolute min-h-0 min-w-0", count > 1 && "p-1")}
+              onPointerDown={() => store.setActivePane(index)}
+              onFocusCapture={() => store.setActivePane(index)}
             >
-              <SplitChatPaneControlsContext
-                value={
-                  count > 1 ? (
-                    <div
-                      className="relative z-10 flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
-                      onPointerDown={(event) => event.stopPropagation()}
-                    >
-                      {maximized === null ? (
+              <div
+                className={cn(
+                  "relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background",
+                  count > 1 &&
+                    "rounded-lg border transition-colors duration-150 motion-reduce:transition-none",
+                  count > 1 && (activePaneIndex === index ? "border-primary/40" : "border-border"),
+                )}
+              >
+                <div
+                  data-split-tab-strip
+                  className={cn(
+                    "relative z-10 flex h-7 shrink-0 items-center border-b border-border bg-muted/20 [-webkit-app-region:no-drag]",
+                    dropZone?.mode === "tab" &&
+                      dropZone.index === index &&
+                      "bg-primary/15 ring-1 ring-inset ring-primary/50",
+                  )}
+                >
+                  <div
+                    role="tablist"
+                    aria-label={`Chats in pane ${index + 1}`}
+                    className="flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto overflow-y-hidden px-0.5 [scrollbar-width:none]"
+                  >
+                    {tabs.map((tab, tabIndex) => (
+                      <Fragment key={paneKey(tab)}>
                         <SplitChatDragHandle
-                          target={target}
-                          onMove={(point, title) => {
-                            sourceRef.current = target;
-                            moveThreadContextDrag(point, { title, count: 1, pane: true });
+                          target={tab}
+                          {...dragCallbacks(tab)}
+                          tab={{
+                            key: paneKey(tab),
+                            id: tabId(tabIndex),
+                            panelId,
+                            selected: threadTargetKey(tab) === activeTabKey,
+                            onSelect: () => selectTab(index, tab),
+                            onClose:
+                              tabs.length > 1 ? () => close(threadTargetKey(tab), true) : undefined,
                           }}
-                          onDrop={(point) => {
-                            sourceRef.current = target;
-                            dropThread(point, [target]);
-                          }}
-                          onEnd={() => {
-                            sourceRef.current = null;
-                            endThreadContextDrag();
-                          }}
-                          onMoveByKeyboard={(direction) => {
-                            const destination = (index + direction + count) % count;
-                            if (destination !== index)
-                              place(target, { index: destination, mode: "swap" });
-                          }}
+                          onMoveByKeyboard={(direction) =>
+                            selectTab(
+                              index,
+                              tabs[(tabIndex + direction + tabs.length) % tabs.length]!,
+                            )
+                          }
                         />
-                      ) : null}
-                      {count === 4 ? (
-                        <Tooltip>
-                          <TooltipTrigger
-                            render={
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label={
-                                  columns
-                                    ? "Resize rows independently"
-                                    : "Resize columns independently"
-                                }
-                                onClick={() => store.setResizeLayout(columns ? "rows" : "columns")}
-                              >
-                                {columns ? <Rows2 /> : <Columns2 />}
-                              </Button>
-                            }
+                        {tabIndex < tabs.length - 1 ? (
+                          <span
+                            aria-hidden="true"
+                            data-split-chat-tab-divider
+                            className="mx-0.5 h-5 w-0.5 shrink-0 bg-foreground/45"
                           />
-                          <TooltipPopup>
-                            {columns ? "Resize rows independently" : "Resize columns independently"}
-                          </TooltipPopup>
-                        </Tooltip>
-                      ) : null}
-                      {count > 1 ? (
-                        <>
+                        ) : null}
+                      </Fragment>
+                    ))}
+                  </div>
+                  {tabs.length > 1 ? (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="Close active chat tab"
+                      onClick={() => close(activeTabKey, true)}
+                    >
+                      <X />
+                    </Button>
+                  ) : null}
+                </div>
+                <SplitChatPaneControlsContext
+                  value={
+                    count > 1 ? (
+                      <div
+                        className="relative z-10 flex shrink-0 items-center gap-0.5 [-webkit-app-region:no-drag]"
+                        onPointerDown={(event) => event.stopPropagation()}
+                      >
+                        {maximized === null ? (
+                          <SplitChatDragHandle
+                            target={target}
+                            {...dragCallbacks(target)}
+                            onMoveByKeyboard={(direction) => {
+                              const destination = (index + direction + count) % count;
+                              if (destination !== index)
+                                place(target, { index: destination, mode: "swap" });
+                            }}
+                          />
+                        ) : null}
+                        {count === 4 ? (
                           <Tooltip>
                             <TooltipTrigger
                               render={
@@ -404,55 +619,95 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                                   variant="ghost"
                                   size="icon-xs"
                                   aria-label={
-                                    maximized === index
-                                      ? "Restore split layout"
-                                      : "Maximize chat pane"
+                                    columns
+                                      ? "Resize rows independently"
+                                      : "Resize columns independently"
                                   }
-                                  onClick={() => {
-                                    store.setActivePane(index);
-                                    setMaximizedPaneIndex(maximized === index ? null : index);
-                                  }}
+                                  onClick={() =>
+                                    store.setResizeLayout(columns ? "rows" : "columns")
+                                  }
                                 >
-                                  {maximized === index ? <Minimize2 /> : <Maximize2 />}
+                                  {columns ? <Rows2 /> : <Columns2 />}
                                 </Button>
                               }
                             />
                             <TooltipPopup>
-                              {maximized === index ? "Restore split layout" : "Maximize this chat"}
+                              {columns
+                                ? "Resize rows independently"
+                                : "Resize columns independently"}
                             </TooltipPopup>
                           </Tooltip>
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            aria-label="Close chat pane"
-                            onClick={() => close(threadTargetKey(target))}
-                          >
-                            <X />
-                          </Button>
-                        </>
-                      ) : null}
-                    </div>
-                  ) : null
-                }
-              >
-                <SplitChatPaneActiveContext value={index === activeIndex}>
-                  {/* The app-wide composer handle belongs to the active pane only. */}
-                  <ComposerHandleContext value={index === activeIndex ? composerHandle : null}>
-                    <ThreadRouteView
-                      target={target}
-                      asPane
-                      ownsRoute={index === 0}
-                      background={modalOpen}
-                      onTargetUnavailable={
-                        count > 1 ? () => close(threadTargetKey(target)) : undefined
-                      }
-                    />
-                  </ComposerHandleContext>
-                </SplitChatPaneActiveContext>
-              </SplitChatPaneControlsContext>
+                        ) : null}
+                        {count > 1 ? (
+                          <>
+                            <Tooltip>
+                              <TooltipTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-xs"
+                                    aria-label={
+                                      maximized === index
+                                        ? "Restore split layout"
+                                        : "Maximize chat pane"
+                                    }
+                                    onClick={() => {
+                                      store.setActivePane(index);
+                                      setMaximizedPaneIndex(maximized === index ? null : index);
+                                    }}
+                                  >
+                                    {maximized === index ? <Minimize2 /> : <Maximize2 />}
+                                  </Button>
+                                }
+                              />
+                              <TooltipPopup>
+                                {maximized === index
+                                  ? "Restore split layout"
+                                  : "Maximize this chat"}
+                              </TooltipPopup>
+                            </Tooltip>
+                            {tabs.length === 1 ? (
+                              <Button
+                                variant="ghost"
+                                size="icon-xs"
+                                aria-label="Close chat pane"
+                                onClick={() => close(activeTabKey)}
+                              >
+                                <X />
+                              </Button>
+                            ) : null}
+                          </>
+                        ) : null}
+                      </div>
+                    ) : null
+                  }
+                >
+                  <SplitChatPaneActiveContext value={index === activeIndex}>
+                    {/* The app-wide composer handle belongs to the active pane only. */}
+                    <ComposerHandleContext value={index === activeIndex ? composerHandle : null}>
+                      <div
+                        role="tabpanel"
+                        id={panelId}
+                        aria-labelledby={tabId(selectedTabIndex)}
+                        className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+                      >
+                        <ThreadRouteView
+                          target={target}
+                          asPane
+                          ownsRoute={index === 0}
+                          background={modalOpen}
+                          onTargetUnavailable={
+                            count > 1 || tabs.length > 1 ? () => close(activeTabKey) : undefined
+                          }
+                        />
+                      </div>
+                    </ComposerHandleContext>
+                  </SplitChatPaneActiveContext>
+                </SplitChatPaneControlsContext>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {maximized !== null || count < 2 ? null : count === 2 ? (
           divider("--split-x", "vertical", horizontalRatio, store.setHorizontalRatio, {
             left: x,
@@ -500,7 +755,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
               : null}
           </>
         )}
-        {dropZone ? (
+        {dropZone && dropZone.mode !== "tab" ? (
           <div
             key={`${dropZone.mode}:${dropZone.index}`}
             aria-hidden="true"
@@ -517,7 +772,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
           >
             <span className="rounded-md border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-sm">
               {dropZone.mode === "blocked"
-                ? `Open up to ${MAX_SPLIT_CHATS} chats. Drag one chat at a time.`
+                ? `Open up to ${MAX_SPLIT_CHATS} panes. Drag one chat at a time.`
                 : dropZone.mode === "swap"
                   ? "Swap chats"
                   : "Open chat here"}

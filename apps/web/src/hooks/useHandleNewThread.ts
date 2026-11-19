@@ -14,6 +14,7 @@ import {
   useComposerDraftStore,
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
+import { useSplitChatStore } from "../splitChatStore";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -130,6 +131,17 @@ export function createNewThreadHandler(router: AnyRouter) {
     const requestingRouteHref = router.state.location.href;
     const routeChangedSinceRequest = () => router.state.location.href !== requestingRouteHref;
     const currentRouteTarget = getCurrentRouteTarget();
+    const openDraft = async (draftId: DraftId) => {
+      if (
+        useSplitChatStore.getState().openInTab({ kind: "draft", draftId }, getCurrentRouteTarget())
+      )
+        return;
+      await router.navigate({
+        to: "/draft/$draftId",
+        params: { draftId },
+        replace: options?.replace ?? false,
+      });
+    };
     const carrySourceShell =
       currentRouteTarget?.kind === "server" ? readThreadShell(currentRouteTarget.threadRef) : null;
     const carrySourceDraft =
@@ -346,11 +358,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         ) {
           return opened;
         }
-        await router.navigate({
-          to: "/draft/$draftId",
-          params: { draftId: emptyStoredDraftThread.draftId },
-          replace: options?.replace ?? false,
-        });
+        await openDraft(emptyStoredDraftThread.draftId);
         return opened;
       })();
     }
@@ -407,11 +415,7 @@ export function createNewThreadHandler(router: AnyRouter) {
           ...pickExplicitWorkspaceOptions(options),
         });
         seedPrompt(racedDraft.draftId);
-        await router.navigate({
-          to: "/draft/$draftId",
-          params: { draftId: racedDraft.draftId },
-          replace: options?.replace ?? false,
-        });
+        await openDraft(racedDraft.draftId);
         return { draftId: racedDraft.draftId, threadId: racedDraft.threadId };
       }
       setLogicalProjectDraftThreadId(logicalProjectKey, projectRef, draftId, {
@@ -435,11 +439,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });
       }
       seedPrompt(draftId);
-      await router.navigate({
-        to: "/draft/$draftId",
-        params: { draftId },
-        replace: options?.replace ?? false,
-      });
+      await openDraft(draftId);
       return { draftId, threadId };
     })();
   };
