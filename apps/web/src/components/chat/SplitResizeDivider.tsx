@@ -11,6 +11,9 @@ interface SplitResizeDividerProps {
   readonly ratio: number;
   readonly onResize: (ratio: number) => void;
   readonly style: CSSProperties;
+  readonly minRatio?: number;
+  readonly maxRatio?: number;
+  readonly defaultRatio?: number;
 }
 
 export const SplitResizeDivider = memo(function SplitResizeDivider({
@@ -20,14 +23,19 @@ export const SplitResizeDivider = memo(function SplitResizeDivider({
   ratio,
   onResize,
   style,
+  minRatio,
+  maxRatio,
+  defaultRatio = 0.5,
 }: SplitResizeDividerProps) {
   const vertical = orientation === "vertical";
   const handleRef = useRef<HTMLDivElement | null>(null);
   const readBounds = () => {
     const rect = containerRef.current?.getBoundingClientRect();
     const size = (vertical ? rect?.width : rect?.height) ?? 0;
-    const min = size > 0 ? Math.min(0.4, Math.max(0.15, (vertical ? 240 : 140) / size)) : 0.15;
-    return { min, max: 1 - min };
+    const baseMin = size > 0 ? Math.min(0.4, Math.max(0.15, (vertical ? 240 : 140) / size)) : 0.15;
+    const min = minRatio !== undefined ? Math.max(0.1, minRatio) : baseMin;
+    const max = maxRatio !== undefined ? Math.min(0.9, maxRatio) : 1 - baseMin;
+    return min <= max ? { min, max } : { min: ratio, max: ratio };
   };
   const drag = useResizeDrag<HTMLDivElement>(() => {
     const container = containerRef.current;
@@ -73,8 +81,8 @@ export const SplitResizeDivider = memo(function SplitResizeDivider({
       role="separator"
       aria-orientation={orientation}
       aria-label={vertical ? "Resize chat columns" : "Resize chat rows"}
-      aria-valuemin={15}
-      aria-valuemax={85}
+      aria-valuemin={Math.round((minRatio ?? 0.15) * 100)}
+      aria-valuemax={Math.round((maxRatio ?? 0.85) * 100)}
       aria-valuenow={Math.round(ratio * 100)}
       tabIndex={0}
       onPointerDown={drag.onPointerDown}
@@ -82,7 +90,7 @@ export const SplitResizeDivider = memo(function SplitResizeDivider({
       onPointerUp={drag.onPointerUp}
       onPointerCancel={drag.onPointerCancel}
       onLostPointerCapture={drag.onLostPointerCapture}
-      onDoubleClick={() => onResize(0.5)}
+      onDoubleClick={() => onResize(defaultRatio)}
       onKeyDown={(event) => {
         const previous = vertical ? "ArrowLeft" : "ArrowUp";
         const next = vertical ? "ArrowRight" : "ArrowDown";

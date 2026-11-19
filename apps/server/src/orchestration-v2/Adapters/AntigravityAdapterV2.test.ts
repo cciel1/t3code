@@ -1274,3 +1274,200 @@ describe("AntigravityAdapterV2 session system prompt", () => {
       }).pipe(Effect.provide(layerSession)),
   );
 });
+
+describe("AntigravityAdapterV2 post-settle background wake", () => {
+  it.live(
+    "buffers post-settle reactive wakeup updates and delivers them in a continuation turn",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const crypto = yield* SecureRandom.SecureRandom;
+        const path = yield* Path.Path;
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+        const offered: Array<unknown> = [];
+        const continuationReady = yield* Deferred.make<void>();
+        const instanceId = ProviderInstanceId.make("antigravity-post-settle-wake-test");
+        const threadId = ThreadId.make("thread-antigravity-post-settle-wake");
+        const adapter = yield* makeAntigravityAdapterV2({
+          instanceId,
+          selfInvocation: yield* resolveSelfInvocation(),
+          continuationRequests: {
+            offer: (request) =>
+              Effect.sync(() => {
+                offered.push(request);
+              }).pipe(
+                Effect.andThen(Deferred.succeed(continuationReady, undefined)),
+                Effect.asVoid,
+              ),
+          },
+          makeRuntime: (input) =>
+            makeAntigravityAcpRuntime({
+              ...input,
+              childProcessSpawner,
+              spawn: {
+                command: process.execPath,
+                args: [mockAgentPath],
+                cwd: input.cwd,
+                env: { T3_ACP_ANTIGRAVITY: "1" },
+              },
+            }).pipe(
+              Effect.provideService(SecureRandom.SecureRandom, crypto),
+              Effect.map((runtime): RuntimeService => ({
+                ...runtime,
+                handleSessionUpdate: (handler) =>
+                  Effect.sync(() => {
+                    sessionUpdate = handler;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+                prompt: () =>
+                  Effect.gen(function* () {
+                    yield* sessionUpdate!(
+                      normalizeAntigravitySessionUpdate({
+                        sessionId: "mock-session-1",
+                        update: {
+                          sessionUpdate: "agent_message_chunk",
+                          content: { type: "text", text: "Started background render." },
+                        },
+                      }),
+                    );
+                    return { stopReason: "end_turn" as const };
+                  }),
+              })),
+            ),
+          withProcess: (_stop, task) => task,
+          defaultModel: Effect.undefined,
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "gemini-test-low" } as const;
+        const session = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-antigravity-wake"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* session.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const now = yield* DateTime.now;
+        const appThread = {
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          id: threadId,
+          projectId: ProjectId.make("project-antigravity-wake"),
+          title: "Antigravity background wake",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          branch: null,
+          worktreePath: process.cwd(),
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        };
+        // Turn 1 settles while a background task continues running inside Antigravity.
+        yield* session.startTurn({
+          appThread,
+          threadId,
+          runId: RunId.make("run-antigravity-wake-1"),
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: RunAttemptId.make("attempt-antigravity-wake-1"),
+          rootNodeId: NodeId.make("node-antigravity-wake-1"),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: MessageId.make("message-antigravity-wake-1"),
+            text: "render bgm",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runDrain,
+        );
+        assert.lengthOf(offered, 0);
+
+        // Antigravity wakes up asynchronously after Turn 1 settled and streams its completion reply.
+        yield* sessionUpdate!(
+          normalizeAntigravitySessionUpdate({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "agent_thought_chunk",
+              content: { type: "text", text: "Background render finished." },
+            },
+          }),
+        );
+        assert.lengthOf(offered, 0);
+        yield* sessionUpdate!(
+          normalizeAntigravitySessionUpdate({
+            sessionId: "mock-session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Render complete!" },
+            },
+          }),
+        );
+        yield* Deferred.await(continuationReady);
+        assert.lengthOf(offered, 1);
+
+        // Orchestrator opens the provider continuation turn; buffered chunks drain and finalize.
+        yield* session.startTurn({
+          appThread,
+          threadId,
+          runId: RunId.make("run-antigravity-wake-2"),
+          runOrdinal: 2,
+          providerTurnOrdinal: 2,
+          attemptId: RunAttemptId.make("attempt-antigravity-wake-2"),
+          rootNodeId: NodeId.make("node-antigravity-wake-2"),
+          providerThread,
+          message: {
+            createdBy: "agent",
+            creationSource: "provider",
+            messageId: MessageId.make("message-antigravity-wake-2"),
+            text: "",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        });
+        const wakeEvents = Array.from(
+          yield* session.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          ),
+        );
+        const assistantText = wakeEvents
+          .filter(
+            (event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "assistant_message",
+          )
+          .map((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "assistant_message"
+              ? event.turnItem.text
+              : "",
+          )
+          .join("");
+        assert.include(assistantText, "Render complete!");
+      }).pipe(Effect.provide(layerSession)),
+  );
+});

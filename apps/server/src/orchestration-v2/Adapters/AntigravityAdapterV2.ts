@@ -281,6 +281,9 @@ export function makeAntigravityAcpAdapterFlavor(
     // 1.4.5 returns the root trajectory's Gemini usageMetadata delta; 1.4.1 returns none.
     reportsPerTurnPromptUsage: true,
     geminiPromptUsage: true,
+    // Background command completions wake Antigravity after `session/prompt` settles and stream
+    // unsolicited ACP `session/update` chunks; buffer and forward them as a continuation run.
+    enablePostSettleContinuation: true,
     ...(profileDirectory === undefined
       ? {}
       : {

@@ -156,4 +156,26 @@ describe("splitChatStore", () => {
     expect(restored.topRowRatio).toBe(0.85);
     expect(restored.resizeLayout).toBe("columns");
   });
+
+  it("clamps and persists three-column split ratios for 5- and 6-pane layouts", () => {
+    const store = useSplitChatStore.getState();
+    store.setTopRowTripleRatios([0.25, 0.7]);
+    store.setBottomRowTripleRatios([0.05, 0.99]);
+    expect(useSplitChatStore.getState().topRowTripleRatios).toEqual([0.25, 0.7]);
+    expect(useSplitChatStore.getState().bottomRowTripleRatios).toEqual([0.15, 0.85]);
+
+    store.setTopRowTripleRatios([0.6, 0.65]);
+    expect(useSplitChatStore.getState().topRowTripleRatios).toEqual([0.6, 0.75]);
+
+    const merge = useSplitChatStore.persist.getOptions().merge!;
+    const restored = merge(
+      {
+        topRowTripleRatios: [0.3, 0.68],
+        bottomRowTripleRatios: [0.2, 0.22],
+      },
+      useSplitChatStore.getInitialState(),
+    );
+    expect(restored.topRowTripleRatios).toEqual([0.3, 0.68]);
+    expect(restored.bottomRowTripleRatios).toEqual([0.2, 0.35]);
+  });
 });

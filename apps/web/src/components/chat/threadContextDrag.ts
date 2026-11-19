@@ -40,6 +40,7 @@ export interface ThreadContextDragGhost {
   readonly y: number;
   readonly title: string;
   readonly count: number;
+  readonly detach?: boolean;
 }
 
 let ghost: ThreadContextDragGhost | null = null;
@@ -93,6 +94,7 @@ export function moveThreadContextDrag(
     count: number;
     threads?: ReadonlyArray<ScopedThreadRef>;
     pane?: boolean;
+    detach?: boolean;
   },
 ) {
   // A split pane drag only rearranges panes; it never attaches to a composer.

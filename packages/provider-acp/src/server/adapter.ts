@@ -1611,6 +1611,11 @@ export function acpPostSettleContinuationOfferEvidence(
   if (update.sessionUpdate === "agent_message_chunk") {
     return (acpContentBlockDisplayText(update.content)?.trim().length ?? 0) > 0;
   }
+  if (update.sessionUpdate === "agent_message") {
+    return (update.content ?? []).some(
+      (content) => (acpContentBlockDisplayText(content)?.trim().length ?? 0) > 0,
+    );
+  }
   if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
     return parseSessionUpdateEvent(notification).events.some((event) => {
       if (event._tag !== "ToolCallUpdated") return false;
@@ -4037,12 +4042,27 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             acpSubagentStatusBlocksTurnSettlement(subagent.task.status),
           );
 
+        const hasOpenContinuationWork = (context: ActiveAcpTurn): boolean => {
+          if (!acpIsProviderContinuationMessage(context.input.message)) return false;
+          if (openAgentRequests.size > 0) return true;
+          for (const tool of context.tools.values()) {
+            const status = toolStatus(tool.status);
+            if (status === "pending" || status === "running" || status === "waiting") return true;
+          }
+          return false;
+        };
+
+        const allowsDeferredFinalize = (context: ActiveAcpTurn): boolean =>
+          flavor.deferFinalizeForBackgroundWork === true ||
+          (postSettleContinuationEnabled &&
+            acpIsProviderContinuationMessage(context.input.message));
+
         const rearmDeferredFinalize =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (context: ActiveAcpTurn) {
-            if (!flavor.deferFinalizeForBackgroundWork) return;
+            if (!allowsDeferredFinalize(context)) return;
             if (!context.promptSettled || context.finalized) return;
-            if (hasDeferredBackgroundWork(context)) return;
+            if (hasDeferredBackgroundWork(context) || hasOpenContinuationWork(context)) return;
             yield* scheduleDeferredFinalize(context);
           });
 
@@ -8227,9 +8247,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
 
         scheduleDeferredFinalize = Effect.fn("scheduleDeferredFinalize")(function* (context) {
-          if (!flavor.deferFinalizeForBackgroundWork) return;
+          if (!allowsDeferredFinalize(context)) return;
           if (!context.promptSettled || context.finalized || context.interrupted) return;
-          if (hasDeferredBackgroundWork(context)) return;
+          if (hasDeferredBackgroundWork(context) || hasOpenContinuationWork(context)) return;
           context.backgroundFinalizeGeneration += 1;
           const generation = context.backgroundFinalizeGeneration;
           yield* Effect.gen(function* () {
@@ -8241,7 +8261,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ) {
               return;
             }
-            if (hasDeferredBackgroundWork(context)) return;
+            if (hasDeferredBackgroundWork(context) || hasOpenContinuationWork(context)) return;
             const status = context.promptSettledStatus ?? "completed";
             yield* finalizeTurn(context, status);
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
@@ -8812,8 +8832,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context.promptSettled = true;
               context.promptSettledStatus = "completed";
               if (drainedWakeCount === 0) {
-                if (continuationWasRequested && flavor.deferFinalizeForBackgroundWork === true) {
-                  if (hasDeferredBackgroundWork(context)) {
+                if (
+                  continuationWasRequested &&
+                  (flavor.deferFinalizeForBackgroundWork === true || postSettleContinuationEnabled)
+                ) {
+                  if (hasDeferredBackgroundWork(context) || hasOpenContinuationWork(context)) {
                     yield* rearmDeferredFinalize(context);
                   } else {
                     yield* scheduleDeferredFinalize(context);
@@ -8824,7 +8847,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return;
               }
               if (!context.finalized) {
-                if (hasDeferredBackgroundWork(context)) {
+                if (hasDeferredBackgroundWork(context) || hasOpenContinuationWork(context)) {
                   yield* rearmDeferredFinalize(context);
                 } else {
                   yield* scheduleDeferredFinalize(context);

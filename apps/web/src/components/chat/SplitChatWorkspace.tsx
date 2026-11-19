@@ -1,5 +1,5 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import { Columns2, Maximize2, Minimize2, Rows2 } from "lucide-react";
 import {
   Fragment,
@@ -29,6 +29,7 @@ import { buildThreadRouteParams, type ThreadRouteTarget } from "../../threadRout
 import { ThreadRouteView } from "../ThreadRouteView";
 import { Button } from "../ui/button";
 import { SidebarInset } from "../ui/sidebar";
+import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SplitChatPaneActiveContext, SplitChatPaneControlsContext } from "./splitChatPaneContext";
 import { SplitResizeDivider } from "./SplitResizeDivider";
@@ -77,6 +78,17 @@ function distinctPanes(all: readonly ThreadRouteTarget[], groups: SplitChatTabGr
   });
 }
 
+const DETACH_WINDOW_MARGIN_PX = 16;
+
+function isOutsideWindow(point: { x: number; y: number }): boolean {
+  return (
+    point.x < -DETACH_WINDOW_MARGIN_PX ||
+    point.x > window.innerWidth + DETACH_WINDOW_MARGIN_PX ||
+    point.y < -DETACH_WINDOW_MARGIN_PX ||
+    point.y > window.innerHeight + DETACH_WINDOW_MARGIN_PX
+  );
+}
+
 export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   primaryTarget,
   modalOpen,
@@ -84,6 +96,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   onLayoutReady,
 }: SplitChatWorkspaceProps) {
   const navigate = useNavigate();
+  const router = useRouter();
   const workspaceId = useId();
   const composerHandle = useComposerHandleContext();
   const animations = usePanelAnimationSettings();
@@ -96,6 +109,8 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     verticalRatio,
     topRowRatio,
     bottomRowRatio,
+    topRowTripleRatios,
+    bottomRowTripleRatios,
     rightColumnRatio,
     resizeLayout,
   } = store;
@@ -149,21 +164,35 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   const y = "var(--split-y)";
   const topX = "var(--split-top-x)";
   const bottomX = "var(--split-bottom-x)";
+  const topX1 = "var(--split-top-x1)";
+  const topX2 = "var(--split-top-x2)";
+  const bottomX1 = "var(--split-bottom-x1)";
+  const bottomX2 = "var(--split-bottom-x2)";
   const rightY = "var(--split-right-y)";
   const remaining = (value: string) => `calc(100% - ${value})`;
+  const between = (start: string, end: string) => `calc(${end} - ${start})`;
   const layoutBounds = (size: number): CSSProperties[] =>
     size >= 5
-      ? Array.from({ length: size }, (_, index) => {
-          const topRow = index < 3;
-          const column = topRow ? index : index - 3;
-          const width = 100 / (topRow ? 3 : size - 3);
-          return {
-            left: `${column * width}%`,
-            top: topRow ? 0 : y,
-            width: `${width}%`,
-            height: topRow ? y : remaining(y),
-          };
-        })
+      ? [
+          { left: 0, top: 0, width: topX1, height: y },
+          { left: topX1, top: 0, width: between(topX1, topX2), height: y },
+          { left: topX2, top: 0, width: remaining(topX2), height: y },
+          ...(size === 5
+            ? [
+                { left: 0, top: y, width: bottomX, height: remaining(y) },
+                { left: bottomX, top: y, width: remaining(bottomX), height: remaining(y) },
+              ]
+            : [
+                { left: 0, top: y, width: bottomX1, height: remaining(y) },
+                {
+                  left: bottomX1,
+                  top: y,
+                  width: between(bottomX1, bottomX2),
+                  height: remaining(y),
+                },
+                { left: bottomX2, top: y, width: remaining(bottomX2), height: remaining(y) },
+              ]),
+        ]
       : size === 1
         ? [{ left: 0, top: 0, width: "100%", height: "100%" }]
         : size === 2
@@ -273,6 +302,40 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     next[index] = target;
     commitPanes(next, tabGroups, index, { key: paneKey(target), tab: true });
   };
+
+  const detachToNewWindow = useStableCallback(async (target: ThreadRouteTarget) => {
+    if (target.kind !== "server") return;
+    const { href, pathname } = router.buildLocation({
+      to: "/$environmentId/$threadId",
+      params: buildThreadRouteParams(target.threadRef),
+    });
+    const url = new URL(href, window.location.href);
+    let opened = false;
+    if (window.desktopBridge?.openThreadWindow) {
+      opened = await window.desktopBridge.openThreadWindow(pathname).catch(() => false);
+      if (!opened) {
+        toastManager.add({ type: "error", title: "Could not open thread window" });
+      }
+    } else {
+      url.searchParams.set("threadWindow", "1");
+      opened =
+        window.open(url.href, "_blank", "popup,noopener,noreferrer,width=1000,height=780") !== null;
+    }
+    if (!opened) return;
+    const key = threadTargetKey(target);
+    const latest = useSplitChatStore.getState();
+    const current = distinctPanes(
+      effectivePrimary ? [effectivePrimary, ...latest.secondaryPanes] : latest.secondaryPanes,
+      latest.tabGroups,
+    );
+    const pane = current.find((entry) =>
+      tabsForPane(latest.tabGroups, entry).some((tab) => threadTargetKey(tab) === key),
+    );
+    const tabCount = pane ? tabsForPane(latest.tabGroups, pane).length : 0;
+    if (current.length > 1 || tabCount > 1) {
+      close(key);
+    }
+  });
 
   const resolveDrop = (
     point: { x: number; y: number },
@@ -485,6 +548,11 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     ratio: number,
     onResize: (value: number) => void,
     style: CSSProperties,
+    boundsOptions?: {
+      readonly minRatio?: number;
+      readonly maxRatio?: number;
+      readonly defaultRatio?: number;
+    },
   ) => (
     <SplitResizeDivider
       key={property}
@@ -494,6 +562,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
       ratio={ratio}
       onResize={onResize}
       style={style}
+      {...boundsOptions}
     />
   );
 
@@ -513,6 +582,10 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
             "--split-y": `${verticalRatio * 100}%`,
             "--split-top-x": `${topRowRatio * 100}%`,
             "--split-bottom-x": `${bottomRowRatio * 100}%`,
+            "--split-top-x1": `${topRowTripleRatios[0] * 100}%`,
+            "--split-top-x2": `${topRowTripleRatios[1] * 100}%`,
+            "--split-bottom-x1": `${bottomRowTripleRatios[0] * 100}%`,
+            "--split-bottom-x2": `${bottomRowTripleRatios[1] * 100}%`,
             "--split-right-y": `${rightColumnRatio * 100}%`,
           } as CSSProperties
         }
@@ -528,10 +601,15 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
           const dragCallbacks = (dragTarget: ThreadRouteTarget) => ({
             onMove: (point: { x: number; y: number }, title: string) => {
               sourceRef.current = dragTarget;
-              moveThreadContextDrag(point, { title, count: 1, pane: true });
+              const detach = dragTarget.kind === "server" && isOutsideWindow(point);
+              moveThreadContextDrag(point, { title, count: 1, pane: true, detach });
             },
             onDrop: (point: { x: number; y: number }) => {
               sourceRef.current = dragTarget;
+              if (dragTarget.kind === "server" && isOutsideWindow(point)) {
+                void detachToNewWindow(dragTarget);
+                return;
+              }
               dropThread(point, [dragTarget]);
             },
             onEnd: () => {
@@ -748,20 +826,74 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
               top: y,
               width: "100%",
             })}
-            {count < 5
-              ? divider("--split-top-x", "vertical", topRowRatio, store.setTopRowRatio, {
-                  left: topX,
-                  top: 0,
-                  height: y,
-                })
-              : null}
-            {count === 4
-              ? divider("--split-bottom-x", "vertical", bottomRowRatio, store.setBottomRowRatio, {
-                  left: bottomX,
-                  top: y,
-                  height: remaining(y),
-                })
-              : null}
+            {count < 5 ? (
+              divider("--split-top-x", "vertical", topRowRatio, store.setTopRowRatio, {
+                left: topX,
+                top: 0,
+                height: y,
+              })
+            ) : (
+              <>
+                {divider(
+                  "--split-top-x1",
+                  "vertical",
+                  topRowTripleRatios[0],
+                  (value) => store.setTopRowTripleRatios([value, topRowTripleRatios[1]]),
+                  { left: topX1, top: 0, height: y },
+                  {
+                    minRatio: 0.15,
+                    maxRatio: topRowTripleRatios[1] - 0.15,
+                    defaultRatio: 1 / 3,
+                  },
+                )}
+                {divider(
+                  "--split-top-x2",
+                  "vertical",
+                  topRowTripleRatios[1],
+                  (value) => store.setTopRowTripleRatios([topRowTripleRatios[0], value]),
+                  { left: topX2, top: 0, height: y },
+                  {
+                    minRatio: topRowTripleRatios[0] + 0.15,
+                    maxRatio: 0.85,
+                    defaultRatio: 2 / 3,
+                  },
+                )}
+              </>
+            )}
+            {count === 4 || count === 5 ? (
+              divider("--split-bottom-x", "vertical", bottomRowRatio, store.setBottomRowRatio, {
+                left: bottomX,
+                top: y,
+                height: remaining(y),
+              })
+            ) : count >= 6 ? (
+              <>
+                {divider(
+                  "--split-bottom-x1",
+                  "vertical",
+                  bottomRowTripleRatios[0],
+                  (value) => store.setBottomRowTripleRatios([value, bottomRowTripleRatios[1]]),
+                  { left: bottomX1, top: y, height: remaining(y) },
+                  {
+                    minRatio: 0.15,
+                    maxRatio: bottomRowTripleRatios[1] - 0.15,
+                    defaultRatio: 1 / 3,
+                  },
+                )}
+                {divider(
+                  "--split-bottom-x2",
+                  "vertical",
+                  bottomRowTripleRatios[1],
+                  (value) => store.setBottomRowTripleRatios([bottomRowTripleRatios[0], value]),
+                  { left: bottomX2, top: y, height: remaining(y) },
+                  {
+                    minRatio: bottomRowTripleRatios[0] + 0.15,
+                    maxRatio: 0.85,
+                    defaultRatio: 2 / 3,
+                  },
+                )}
+              </>
+            ) : null}
           </>
         )}
         {dropZone && dropZone.mode !== "tab" ? (

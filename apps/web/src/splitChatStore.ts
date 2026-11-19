@@ -14,6 +14,8 @@ interface SplitChatPersisted {
   readonly verticalRatio: number;
   readonly topRowRatio: number;
   readonly bottomRowRatio: number;
+  readonly topRowTripleRatios: readonly [number, number];
+  readonly bottomRowTripleRatios: readonly [number, number];
   readonly rightColumnRatio: number;
   readonly resizeLayout: "rows" | "columns";
 }
@@ -42,6 +44,8 @@ interface SplitChatState {
   readonly verticalRatio: number;
   readonly topRowRatio: number;
   readonly bottomRowRatio: number;
+  readonly topRowTripleRatios: readonly [number, number];
+  readonly bottomRowTripleRatios: readonly [number, number];
   readonly rightColumnRatio: number;
   readonly resizeLayout: "rows" | "columns";
 
@@ -58,17 +62,29 @@ interface SplitChatState {
   readonly setVerticalRatio: (ratio: number) => void;
   readonly setTopRowRatio: (ratio: number) => void;
   readonly setBottomRowRatio: (ratio: number) => void;
+  readonly setTopRowTripleRatios: (ratios: readonly [number, number]) => void;
+  readonly setBottomRowTripleRatios: (ratios: readonly [number, number]) => void;
   readonly setRightColumnRatio: (ratio: number) => void;
   readonly setResizeLayout: (layout: "rows" | "columns") => void;
 }
 
 const DEFAULT_RATIO = 0.5;
+const DEFAULT_TRIPLE_RATIOS: readonly [number, number] = [1 / 3, 2 / 3];
 const MIN_RATIO = 0.15;
 const MAX_RATIO = 0.85;
 
 function clampRatio(val: number): number {
   if (!Number.isFinite(val)) return DEFAULT_RATIO;
   return Math.max(MIN_RATIO, Math.min(MAX_RATIO, val));
+}
+
+function clampTripleRatios(pair: readonly [number, number] | undefined): readonly [number, number] {
+  if (!pair || !Number.isFinite(pair[0]) || !Number.isFinite(pair[1])) {
+    return DEFAULT_TRIPLE_RATIOS;
+  }
+  const first = Math.max(MIN_RATIO, Math.min(1 - MIN_RATIO * 2, pair[0]));
+  const second = Math.max(first + MIN_RATIO, Math.min(1 - MIN_RATIO, pair[1]));
+  return [first, second];
 }
 
 export const useSplitChatStore = create<SplitChatState>()(
@@ -81,6 +97,8 @@ export const useSplitChatStore = create<SplitChatState>()(
       verticalRatio: DEFAULT_RATIO,
       topRowRatio: DEFAULT_RATIO,
       bottomRowRatio: DEFAULT_RATIO,
+      topRowTripleRatios: DEFAULT_TRIPLE_RATIOS,
+      bottomRowTripleRatios: DEFAULT_TRIPLE_RATIOS,
       rightColumnRatio: DEFAULT_RATIO,
       resizeLayout: "rows",
 
@@ -183,6 +201,14 @@ export const useSplitChatStore = create<SplitChatState>()(
         set({ bottomRowRatio: clampRatio(ratio) });
       },
 
+      setTopRowTripleRatios: (ratios: readonly [number, number]) => {
+        set({ topRowTripleRatios: clampTripleRatios(ratios) });
+      },
+
+      setBottomRowTripleRatios: (ratios: readonly [number, number]) => {
+        set({ bottomRowTripleRatios: clampTripleRatios(ratios) });
+      },
+
       setRightColumnRatio: (ratio) => set({ rightColumnRatio: clampRatio(ratio) }),
       setResizeLayout: (resizeLayout) => set({ resizeLayout }),
     }),
@@ -203,6 +229,8 @@ export const useSplitChatStore = create<SplitChatState>()(
           verticalRatio: clampRatio(saved.verticalRatio ?? DEFAULT_RATIO),
           topRowRatio: clampRatio(saved.topRowRatio ?? DEFAULT_RATIO),
           bottomRowRatio: clampRatio(saved.bottomRowRatio ?? DEFAULT_RATIO),
+          topRowTripleRatios: clampTripleRatios(saved.topRowTripleRatios),
+          bottomRowTripleRatios: clampTripleRatios(saved.bottomRowTripleRatios),
           rightColumnRatio: clampRatio(saved.rightColumnRatio ?? DEFAULT_RATIO),
           resizeLayout: saved.resizeLayout === "columns" ? "columns" : "rows",
         };
@@ -212,6 +240,8 @@ export const useSplitChatStore = create<SplitChatState>()(
         verticalRatio: state.verticalRatio,
         topRowRatio: state.topRowRatio,
         bottomRowRatio: state.bottomRowRatio,
+        topRowTripleRatios: state.topRowTripleRatios,
+        bottomRowTripleRatios: state.bottomRowTripleRatios,
         rightColumnRatio: state.rightColumnRatio,
         resizeLayout: state.resizeLayout,
       }),
