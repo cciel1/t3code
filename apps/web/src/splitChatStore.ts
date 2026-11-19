@@ -5,9 +5,10 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { useComposerDraftStore } from "./composerDraftStore";
 import { isAuxiliaryChatWindow } from "./lib/chatWindow";
 import { resolveStorage } from "./lib/storage";
+import type { SplitLayoutNode } from "./splitChatLayout";
 import type { ThreadRouteTarget } from "./threadRoutes";
 
-export const MAX_SPLIT_CHATS = 6;
+export const MAX_SPLIT_CHATS = 12;
 
 interface SplitChatPersisted {
   readonly horizontalRatio: number;
@@ -39,6 +40,7 @@ interface SplitChatState {
   readonly tabGroups: SplitChatTabGroups;
   readonly secondaryPanes: readonly ThreadRouteTarget[];
   readonly activePaneIndex: number;
+  readonly layoutTree: SplitLayoutNode | null;
 
   readonly horizontalRatio: number;
   readonly verticalRatio: number;
@@ -56,7 +58,9 @@ interface SplitChatState {
     panes: readonly ThreadRouteTarget[],
     activeIndex: number,
     tabGroups?: SplitChatTabGroups,
+    layoutTree?: SplitLayoutNode | null,
   ) => void;
+  readonly setLayoutTree: (layoutTree: SplitLayoutNode | null) => void;
   readonly setActivePane: (index: number) => void;
   readonly setHorizontalRatio: (ratio: number) => void;
   readonly setVerticalRatio: (ratio: number) => void;
@@ -93,6 +97,7 @@ export const useSplitChatStore = create<SplitChatState>()(
       secondaryPanes: [],
       tabGroups: [],
       activePaneIndex: 0,
+      layoutTree: null,
       horizontalRatio: DEFAULT_RATIO,
       verticalRatio: DEFAULT_RATIO,
       topRowRatio: DEFAULT_RATIO,
@@ -173,12 +178,22 @@ export const useSplitChatStore = create<SplitChatState>()(
         return true;
       },
 
-      replaceSecondaryPanes: (secondaryPanes, activePaneIndex, tabGroups = get().tabGroups) => {
+      replaceSecondaryPanes: (
+        secondaryPanes,
+        activePaneIndex,
+        tabGroups = get().tabGroups,
+        layoutTree = get().layoutTree,
+      ) => {
         set({
           secondaryPanes: secondaryPanes.slice(0, MAX_SPLIT_CHATS - 1),
           activePaneIndex,
           tabGroups,
+          layoutTree,
         });
+      },
+
+      setLayoutTree: (layoutTree: SplitLayoutNode | null) => {
+        set({ layoutTree });
       },
 
       setActivePane: (index: number) => {

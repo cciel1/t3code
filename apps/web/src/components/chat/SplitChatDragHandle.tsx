@@ -78,7 +78,11 @@ export function SplitChatDragHandle({
       tabIndex={tab ? (tab.selected ? 0 : -1) : undefined}
       aria-label={tab ? title : "Drag chat to rearrange"}
       title={tab ? title : "Drag chat to rearrange. Use the arrow keys to move it."}
-      className={tab ? "h-full min-w-0 flex-1 cursor-grab" : undefined}
+      className={
+        tab
+          ? "h-full min-w-0 flex-1 cursor-grab [-webkit-app-region:no-drag]"
+          : "[-webkit-app-region:no-drag]"
+      }
       onClick={(event) => {
         if (tab && (!dragged.current || event.detail === 0)) {
           event.currentTarget.focus({ preventScroll: true });
@@ -189,7 +193,7 @@ export function SplitChatDragHandle({
     <div
       role="presentation"
       className={cn(
-        "flex h-6 max-w-56 shrink-0 items-center rounded-sm",
+        "flex h-6 max-w-56 shrink-0 items-center rounded-sm [-webkit-app-region:no-drag]",
         tab.selected ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50",
       )}
     >
@@ -198,9 +202,8 @@ export function SplitChatDragHandle({
         <button
           type="button"
           aria-label={`Close chat tab ${title}`}
-          title={`Close ${title}`}
           tabIndex={-1}
-          className="mr-0.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground outline-hidden hover:bg-foreground/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          className="mr-0.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground outline-hidden [-webkit-app-region:no-drag] hover:bg-foreground/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={tab.onClose}
         >

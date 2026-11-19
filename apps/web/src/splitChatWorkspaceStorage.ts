@@ -1,6 +1,7 @@
 import { isAuxiliaryChatWindow } from "./lib/chatWindow";
 import type { ThreadRouteTarget } from "./threadRoutes";
 import { resolveThreadRouteTarget } from "./threadRoutes";
+import { decodeSplitLayoutTree, type SplitLayoutNode } from "./splitChatLayout";
 import { MAX_SPLIT_CHATS, threadTargetKey, type SplitChatTabGroups } from "./splitChatStore";
 
 const STORAGE_KEY = "t3code:split-workspace:v1";
@@ -11,6 +12,7 @@ export interface SavedSplitWorkspace {
   readonly groups: SplitChatTabGroups;
   readonly activeIndex: number;
   readonly maximizedIndex: number | null;
+  readonly layoutTree?: SplitLayoutNode | null;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -78,6 +80,7 @@ export function readSplitWorkspace(): SavedSplitWorkspace | null {
       groups,
       activeIndex,
       maximizedIndex: secondary.length && saved.maximizedIndex === activeIndex ? activeIndex : null,
+      layoutTree: decodeSplitLayoutTree(saved.layoutTree),
     };
   } catch {
     return null;

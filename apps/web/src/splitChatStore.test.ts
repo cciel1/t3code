@@ -3,7 +3,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { type DraftId, useComposerDraftStore } from "./composerDraftStore";
-import { useSplitChatStore } from "./splitChatStore";
+import { MAX_SPLIT_CHATS, useSplitChatStore } from "./splitChatStore";
 import type { ThreadRouteTarget } from "./threadRoutes";
 
 describe("splitChatStore", () => {
@@ -18,10 +18,6 @@ describe("splitChatStore", () => {
   const thread4: ThreadRouteTarget = {
     kind: "server",
     threadRef: scopeThreadRef("env-1" as EnvironmentId, "thread-4" as ThreadId),
-  };
-  const thread5: ThreadRouteTarget = {
-    kind: "server",
-    threadRef: scopeThreadRef("env-1" as EnvironmentId, "thread-5" as ThreadId),
   };
 
   beforeEach(() => {
@@ -68,17 +64,17 @@ describe("splitChatStore", () => {
     expect(useSplitChatStore.getState().activePaneIndex).toBe(3);
   });
 
-  it("opens six chats including the primary and rejects a seventh", () => {
+  it("opens up to MAX_SPLIT_CHATS chats including the primary and rejects one more", () => {
     const store = useSplitChatStore.getState();
     const additionalThread = (number: number): ThreadRouteTarget => ({
       kind: "server",
       threadRef: scopeThreadRef("env-1" as EnvironmentId, `thread-${number}` as ThreadId),
     });
-    for (const thread of [thread2, thread3, thread4, thread5, additionalThread(6)]) {
-      expect(store.openToSide(thread)).toBe(true);
+    for (let i = 2; i <= MAX_SPLIT_CHATS; i++) {
+      expect(store.openToSide(additionalThread(i))).toBe(true);
     }
-    expect(store.openToSide(additionalThread(7))).toBe(false);
-    expect(useSplitChatStore.getState().secondaryPanes).toHaveLength(5);
+    expect(store.openToSide(additionalThread(MAX_SPLIT_CHATS + 1))).toBe(false);
+    expect(useSplitChatStore.getState().secondaryPanes).toHaveLength(MAX_SPLIT_CHATS - 1);
   });
 
   it("opens a new chat in the focused pane and reuses its existing tabs", () => {

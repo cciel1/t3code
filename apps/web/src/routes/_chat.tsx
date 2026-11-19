@@ -41,8 +41,14 @@ function ChatRouteLayout() {
     if (!restore) return;
     useSplitChatStore
       .getState()
-      .replaceSecondaryPanes(restore.secondary, restore.activeIndex, restore.groups);
+      .replaceSecondaryPanes(
+        restore.secondary,
+        restore.activeIndex,
+        restore.groups,
+        restore.layoutTree ?? null,
+      );
     if (shownTarget) {
+      // oxlint-disable-next-line react/set-state-in-effect -- clears one-shot startup hydration state
       setRestore(null);
       return;
     }
