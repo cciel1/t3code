@@ -3,6 +3,7 @@ import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled"
 
 export type ThreadActionMenuId =
   | "open-to-side"
+  | "open-in-new-window"
   | "find"
   | "new-thread-on-branch"
   | "filter-by-project"
@@ -104,6 +105,7 @@ export interface ThreadActionMenuState {
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
     "open-to-side",
+    "open-in-new-window",
     "find",
     "new-thread-on-branch",
     "project-settings",
@@ -125,7 +127,10 @@ export function buildThreadActionMenuItems(
       ? [{ id: "find" as const, label: "Find in thread", icon: "text-search" }]
       : []),
     ...(state.showOpenToSide
-      ? [{ id: "open-to-side" as const, label: "Open to the side", icon: "columns-2" }]
+      ? [
+          { id: "open-to-side" as const, label: "Open to the side", icon: "columns-2" },
+          { id: "open-in-new-window" as const, label: "Open in new window" },
+        ]
       : []),
     ...(state.branch
       ? [

@@ -21,6 +21,9 @@ import {
 } from "./WindowsForeground.ts";
 import { startWindowsForegroundFocusThread } from "./WindowsForegroundFocusThread.ts";
 
+// Only window handlers register trusted thread windows. Guest contents are never registered here.
+export const threadWindowContents = new Map<number, Electron.WebContents>();
+
 function windowsForegroundFocusTarget(window: Electron.BrowserWindow) {
   return {
     windowId: window.id,

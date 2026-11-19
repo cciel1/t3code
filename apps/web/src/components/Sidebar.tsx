@@ -2688,6 +2688,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "open-in-new-window": {
+            const { href, pathname } = router.buildLocation({
+              to: "/$environmentId/$threadId",
+              params: buildThreadRouteParams(threadRef),
+            });
+            const url = new URL(href, window.location.href);
+            if (window.desktopBridge?.openThreadWindow) {
+              const opened = await window.desktopBridge
+                .openThreadWindow(pathname)
+                .catch(() => false);
+              if (!opened)
+                toastManager.add({ type: "error", title: "Could not open thread window" });
+            } else {
+              window.open(url.href, "_blank", "popup,noopener,noreferrer,width=1000,height=780");
+            }
+            return;
+          }
           case "open-to-side": {
             // With no chat open there is no workspace to split, so open the thread itself.
             if (routeTarget === null) {

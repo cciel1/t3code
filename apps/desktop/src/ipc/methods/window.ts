@@ -1,3 +1,5 @@
+import { getDesktopUrl } from "../../electron/ElectronProtocol.ts";
+import { isSameOriginRendererNavigation } from "../../window/DesktopWindow.ts";
 import {
   ContextMenuItemSchema,
   ContextMenuSource,
@@ -332,10 +334,14 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CONTEXT_MENU_CHANNEL,
   payload: ContextMenuInput,
   result: Schema.NullOr(Schema.String),
-  handler: Effect.fn("desktop.ipc.window.showContextMenu")(function* (input) {
+  handler: Effect.fn("desktop.ipc.window.showContextMenu")(function* (input, event) {
     const electronMenu = yield* ElectronMenu.ElectronMenu;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
-    const window = yield* electronWindow.focusedMainOrFirst;
+    const threadContents = event && ElectronWindow.threadWindowContents.get(event.sender.id);
+    const threadWindow = threadContents && Electron.BrowserWindow.fromWebContents(threadContents);
+    const window = threadWindow
+      ? Option.some(threadWindow)
+      : yield* electronWindow.focusedMainOrFirst;
     if (Option.isNone(window)) {
       return null;
     }
@@ -347,6 +353,81 @@ export const showContextMenu = DesktopIpc.makeIpcMethod({
       source: Option.fromNullishOr(input.source),
     });
     return Option.getOrNull(selectedItemId);
+  }),
+});
+
+export const openThreadWindow = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_THREAD_WINDOW_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.openThreadWindow")(function* (pathname) {
+    if (!/^\/[a-zA-Z0-9_.%:-]+\/[a-zA-Z0-9_.%:-]+$/u.test(pathname)) {
+      yield* Effect.logWarning("Invalid T3 thread pathname");
+      return false;
+    }
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const applicationUrl = getDesktopUrl(environment.isDevelopment);
+    const target = new URL(pathname, applicationUrl);
+    if (target.pathname !== pathname) {
+      yield* Effect.logWarning("T3 thread pathname changed on normalization");
+      return false;
+    }
+    // The desktop renderer uses hash routing under its custom scheme.
+    const rendererUrl = new URL(applicationUrl);
+    rendererUrl.hash = target.pathname;
+    const electronWindow = yield* ElectronWindow.ElectronWindow;
+    const result = yield* Effect.result(
+      electronWindow.create(
+        {
+          width: 1000,
+          height: 780,
+          minWidth: 480,
+          minHeight: 380,
+          show: false,
+          autoHideMenuBar: true,
+          title: environment.displayName,
+          webPreferences: {
+            preload: environment.preloadPath,
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+          },
+        },
+        { auxiliary: true },
+      ),
+    );
+    if (result._tag === "Failure") {
+      yield* Effect.logWarning("Could not create T3 thread window", result.failure);
+      return false;
+    }
+    const popup = result.success;
+    const contents = popup.webContents;
+    const id = contents.id;
+    ElectronWindow.threadWindowContents.set(id, contents);
+    contents.once("destroyed", () => ElectronWindow.threadWindowContents.delete(id));
+    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    contents.on("will-navigate", (event, url) => {
+      if (!isSameOriginRendererNavigation({ applicationUrl, navigationUrl: url }))
+        event.preventDefault();
+    });
+    contents.on("will-redirect", (event, url) => {
+      if (!isSameOriginRendererNavigation({ applicationUrl, navigationUrl: url }))
+        event.preventDefault();
+    });
+    const loaded = yield* Effect.promise(() =>
+      popup.loadURL(rendererUrl.href).then(
+        () => ({ loaded: true as const }),
+        (error: unknown) => ({ loaded: false as const, error }),
+      ),
+    );
+    if (!loaded.loaded) {
+      yield* Effect.logWarning("Could not load T3 thread window", loaded.error);
+      if (!popup.isDestroyed()) popup.close();
+      return false;
+    }
+    if (popup.isDestroyed()) return false;
+    popup.show();
+    return true;
   }),
 });
 
