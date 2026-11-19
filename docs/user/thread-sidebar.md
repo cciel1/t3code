@@ -7,7 +7,7 @@ need a separate branch and working directory.
 
 On web and desktop, choose **Open to the side** from a thread's menu in the sidebar,
 or drag one thread from the sidebar into the chat area. The highlighted area
-shows where it will open. You can keep up to four chats open together.
+shows where it will open. You can keep up to six chats open together.
 Each app launch starts with a single chat. Adding or closing a chat redistributes
 the space among the remaining chats without leaving empty slots.
 

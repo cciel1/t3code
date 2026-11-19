@@ -6,7 +6,7 @@ import { useComposerDraftStore } from "./composerDraftStore";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadRouteTarget } from "./threadRoutes";
 
-export const MAX_SPLIT_CHATS = 4;
+export const MAX_SPLIT_CHATS = 6;
 
 interface SplitChatPersisted {
   readonly horizontalRatio: number;

@@ -3,7 +3,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { type DraftId, useComposerDraftStore } from "./composerDraftStore";
-import { useSplitChatStore, MAX_SPLIT_CHATS } from "./splitChatStore";
+import { useSplitChatStore } from "./splitChatStore";
 import type { ThreadRouteTarget } from "./threadRoutes";
 
 describe("splitChatStore", () => {
@@ -68,14 +68,17 @@ describe("splitChatStore", () => {
     expect(useSplitChatStore.getState().activePaneIndex).toBe(3);
   });
 
-  it("enforces the maximum limit of 4 chats total (3 secondary)", () => {
-    expect(useSplitChatStore.getState().openToSide(thread2)).toBe(true);
-    expect(useSplitChatStore.getState().openToSide(thread3)).toBe(true);
-    expect(useSplitChatStore.getState().openToSide(thread4)).toBe(true);
-    expect(useSplitChatStore.getState().secondaryPanes).toHaveLength(MAX_SPLIT_CHATS - 1);
-
-    expect(useSplitChatStore.getState().openToSide(thread5)).toBe(false);
-    expect(useSplitChatStore.getState().secondaryPanes).toHaveLength(3);
+  it("opens six chats including the primary and rejects a seventh", () => {
+    const store = useSplitChatStore.getState();
+    const additionalThread = (number: number): ThreadRouteTarget => ({
+      kind: "server",
+      threadRef: scopeThreadRef("env-1" as EnvironmentId, `thread-${number}` as ThreadId),
+    });
+    for (const thread of [thread2, thread3, thread4, thread5, additionalThread(6)]) {
+      expect(store.openToSide(thread)).toBe(true);
+    }
+    expect(store.openToSide(additionalThread(7))).toBe(false);
+    expect(useSplitChatStore.getState().secondaryPanes).toHaveLength(5);
   });
 
   it("resizes each row and column independently", () => {

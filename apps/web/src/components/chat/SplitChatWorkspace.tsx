@@ -8,7 +8,7 @@ import "./SplitChatWorkspace.css";
 import { ComposerHandleContext, useComposerHandleContext } from "../../composerHandleContext";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { cn } from "../../lib/utils";
-import { threadTargetKey, useSplitChatStore } from "../../splitChatStore";
+import { MAX_SPLIT_CHATS, threadTargetKey, useSplitChatStore } from "../../splitChatStore";
 import { buildThreadRouteParams, type ThreadRouteTarget } from "../../threadRoutes";
 import { ThreadRouteView } from "../ThreadRouteView";
 import { Button } from "../ui/button";
@@ -94,26 +94,38 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   const rightY = "var(--split-right-y)";
   const remaining = (value: string) => `calc(100% - ${value})`;
   const layoutBounds = (size: number): CSSProperties[] =>
-    size === 1
-      ? [{ left: 0, top: 0, width: "100%", height: "100%" }]
-      : size === 2
-        ? [
-            { left: 0, top: 0, width: x, height: "100%" },
-            { left: x, top: 0, width: remaining(x), height: "100%" },
-          ]
-        : size === 4 && resizeLayout === "columns"
+    size >= 5
+      ? Array.from({ length: size }, (_, index) => {
+          const topRow = index < 3;
+          const column = topRow ? index : index - 3;
+          const width = 100 / (topRow ? 3 : size - 3);
+          return {
+            left: `${column * width}%`,
+            top: topRow ? 0 : y,
+            width: `${width}%`,
+            height: topRow ? y : remaining(y),
+          };
+        })
+      : size === 1
+        ? [{ left: 0, top: 0, width: "100%", height: "100%" }]
+        : size === 2
           ? [
-              { left: 0, top: 0, width: x, height: y },
-              { left: x, top: 0, width: remaining(x), height: rightY },
-              { left: 0, top: y, width: x, height: remaining(y) },
-              { left: x, top: rightY, width: remaining(x), height: remaining(rightY) },
+              { left: 0, top: 0, width: x, height: "100%" },
+              { left: x, top: 0, width: remaining(x), height: "100%" },
             ]
-          : [
-              { left: 0, top: 0, width: topX, height: y },
-              { left: topX, top: 0, width: remaining(topX), height: y },
-              { left: 0, top: y, width: size === 3 ? "100%" : bottomX, height: remaining(y) },
-              { left: bottomX, top: y, width: remaining(bottomX), height: remaining(y) },
-            ];
+          : size === 4 && resizeLayout === "columns"
+            ? [
+                { left: 0, top: 0, width: x, height: y },
+                { left: x, top: 0, width: remaining(x), height: rightY },
+                { left: 0, top: y, width: x, height: remaining(y) },
+                { left: x, top: rightY, width: remaining(x), height: remaining(rightY) },
+              ]
+            : [
+                { left: 0, top: 0, width: topX, height: y },
+                { left: topX, top: 0, width: remaining(topX), height: y },
+                { left: 0, top: y, width: size === 3 ? "100%" : bottomX, height: remaining(y) },
+                { left: bottomX, top: y, width: remaining(bottomX), height: remaining(y) },
+              ];
 
   const bounds = layoutBounds(count);
 
@@ -165,7 +177,8 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     if (point.x < rect.left || point.x > rect.right || point.y < rect.top || point.y > rect.bottom)
       return null;
     const source = panes.findIndex((pane) => threadTargetKey(pane) === threadTargetKey(target));
-    if (multiple || (source < 0 && count >= 4)) return { index: 0, mode: "blocked" as const };
+    if (multiple || (source < 0 && count >= MAX_SPLIT_CHATS))
+      return { index: 0, mode: "blocked" as const };
     const paneElements = container.querySelectorAll<HTMLElement>("[data-split-pane-index]");
     let index = Array.from(paneElements).findIndex((pane) => {
       const box = pane.getBoundingClientRect();
@@ -190,7 +203,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
       next[source] = destination;
       next[zone.index] = target;
     } else {
-      if (next.length >= 4) return false;
+      if (next.length >= MAX_SPLIT_CHATS) return false;
       next.splice(zone.index, 0, target);
     }
     const nextPrimary = next[0];
@@ -471,11 +484,13 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
               top: y,
               width: "100%",
             })}
-            {divider("--split-top-x", "vertical", topRowRatio, store.setTopRowRatio, {
-              left: topX,
-              top: 0,
-              height: y,
-            })}
+            {count < 5
+              ? divider("--split-top-x", "vertical", topRowRatio, store.setTopRowRatio, {
+                  left: topX,
+                  top: 0,
+                  height: y,
+                })
+              : null}
             {count === 4
               ? divider("--split-bottom-x", "vertical", bottomRowRatio, store.setBottomRowRatio, {
                   left: bottomX,
@@ -502,7 +517,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
           >
             <span className="rounded-md border bg-popover px-3 py-2 text-sm text-popover-foreground shadow-sm">
               {dropZone.mode === "blocked"
-                ? "Open up to 4 chats. Drag one chat at a time."
+                ? `Open up to ${MAX_SPLIT_CHATS} chats. Drag one chat at a time.`
                 : dropZone.mode === "swap"
                   ? "Swap chats"
                   : "Open chat here"}
