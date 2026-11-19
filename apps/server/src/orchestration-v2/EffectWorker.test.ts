@@ -125,6 +125,8 @@ function layerExecutorFor(input: {
         otherWorkingThreads: () => Effect.succeed([]),
         releaseUnlessBusy: () => Effect.succeed(true),
         subscribePromptSuggestion: () => Stream.empty,
+        getPromptSuggestion: () => Effect.succeed(null),
+        publishPromptSuggestion: () => Effect.void,
       }),
     ),
     Layer.succeed(

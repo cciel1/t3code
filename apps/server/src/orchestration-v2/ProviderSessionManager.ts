@@ -283,6 +283,15 @@ export interface ProviderSessionManagerV2Shape {
   readonly subscribePromptSuggestion: (
     threadId: ThreadId,
   ) => Stream.Stream<OrchestrationV2PromptSuggestion>;
+  /** The stored suggestion, for generators that fill in for providers without a native one. */
+  readonly getPromptSuggestion: (
+    threadId: ThreadId,
+  ) => Effect.Effect<OrchestrationV2PromptSuggestion>;
+  /** Stores a suggestion produced outside a provider's event stream. */
+  readonly publishPromptSuggestion: (
+    threadId: ThreadId,
+    suggestion: NonNullable<OrchestrationV2PromptSuggestion>,
+  ) => Effect.Effect<void>;
 }
 
 export class ProviderSessionManagerV2 extends Context.Service<
@@ -436,6 +445,20 @@ export const layerWithOptions = (
       const promptSuggestionStore = yield* SubscriptionRef.make<
         ReadonlyMap<ThreadId, NonNullable<OrchestrationV2PromptSuggestion>>
       >(new Map());
+      const storePromptSuggestion = (
+        threadId: ThreadId,
+        suggestion: NonNullable<OrchestrationV2PromptSuggestion>,
+      ) =>
+        SubscriptionRef.update(promptSuggestionStore, (current) => {
+          const next = new Map(current);
+          next.delete(threadId);
+          next.set(threadId, suggestion);
+          for (const key of next.keys()) {
+            if (next.size <= MAX_PROMPT_SUGGESTIONS) break;
+            next.delete(key);
+          }
+          return next;
+        });
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
@@ -2786,18 +2809,9 @@ export const layerWithOptions = (
               return commandOutput.append(nativeEvent);
             }
             if (nativeEvent.type === "prompt_suggestion.updated") {
-              return SubscriptionRef.update(promptSuggestionStore, (current) => {
-                const next = new Map(current);
-                next.delete(nativeEvent.threadId);
-                next.set(nativeEvent.threadId, {
-                  runId: nativeEvent.runId,
-                  text: nativeEvent.text,
-                });
-                for (const threadId of next.keys()) {
-                  if (next.size <= MAX_PROMPT_SUGGESTIONS) break;
-                  next.delete(threadId);
-                }
-                return next;
+              return storePromptSuggestion(nativeEvent.threadId, {
+                runId: nativeEvent.runId,
+                text: nativeEvent.text,
               });
             }
             const tracked = retryStalls.track(nativeEvent);
@@ -3455,6 +3469,11 @@ export const layerWithOptions = (
             ),
             Stream.changes,
           ),
+        getPromptSuggestion: (threadId) =>
+          SubscriptionRef.get(promptSuggestionStore).pipe(
+            Effect.map((suggestions) => suggestions.get(threadId) ?? null),
+          ),
+        publishPromptSuggestion: storePromptSuggestion,
       } satisfies ProviderSessionManagerV2Shape);
     }),
   );

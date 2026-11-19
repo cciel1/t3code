@@ -166,7 +166,9 @@ press `Escape` to dismiss it. Each suggestion is one extra request that reuses t
 cache, so it uses a little of your plan's usage. Claude skips suggestions on the first turn of a
 thread and near usage limits. Codex needs version 0.165 or later; if T3 Code manages
 Codex, update it in Settings > Providers. Codex follows a change to the setting at once; open Claude
-threads follow it after they restart. Suggestions show on web and desktop.
+threads follow it after they restart. Other providers, such as Antigravity, get their suggestion
+from your [text generation model](./text-generation.md) after a turn completes in a thread you have
+open; that request does not reuse the turn's cache. Suggestions show on web and desktop.
 
 ## Edit an earlier prompt
 

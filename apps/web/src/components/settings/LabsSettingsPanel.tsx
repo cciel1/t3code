@@ -175,7 +175,7 @@ function PromptSuggestionsRow() {
       serverScoped
       {...searchableSetting("prompt-suggestions-beta")}
       settingKeys={["promptSuggestionsEnabled"]}
-      description="Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart."
+      description="Show a predicted next message in the empty composer after a turn. Tab uses it. Each is an extra request on your plan. Needs Codex 0.165+. Non-Claude/Codex threads use the text generation model."
       control={
         <ScopedSwitch
           settingKeys={["promptSuggestionsEnabled"]}
