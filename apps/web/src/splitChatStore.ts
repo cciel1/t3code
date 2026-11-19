@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
 import { useComposerDraftStore } from "./composerDraftStore";
+import { isAuxiliaryChatWindow } from "./lib/chatWindow";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadRouteTarget } from "./threadRoutes";
 
@@ -188,7 +189,11 @@ export const useSplitChatStore = create<SplitChatState>()(
     {
       name: "t3code:split-chat:v1",
       storage: createJSONStorage(() =>
-        resolveStorage(typeof window !== "undefined" ? window.localStorage : undefined),
+        resolveStorage(
+          typeof window !== "undefined" && !isAuxiliaryChatWindow()
+            ? window.localStorage
+            : undefined,
+        ),
       ),
       merge: (persisted, current) => {
         const saved = (persisted ?? {}) as Partial<SplitChatPersisted>;

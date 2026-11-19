@@ -374,6 +374,7 @@ export const openThreadWindow = DesktopIpc.makeIpcMethod({
     }
     // The desktop renderer uses hash routing under its custom scheme.
     const rendererUrl = new URL(applicationUrl);
+    rendererUrl.searchParams.set("threadWindow", "1");
     rendererUrl.hash = target.pathname;
     const electronWindow = yield* ElectronWindow.ElectronWindow;
     const result = yield* Effect.result(

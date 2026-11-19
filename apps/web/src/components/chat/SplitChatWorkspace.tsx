@@ -1,6 +1,6 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useNavigate } from "@tanstack/react-router";
-import { Columns2, Maximize2, Minimize2, Rows2, X } from "lucide-react";
+import { Columns2, Maximize2, Minimize2, Rows2 } from "lucide-react";
 import {
   Fragment,
   memo,
@@ -24,6 +24,7 @@ import {
   useSplitChatStore,
   type SplitChatTabGroups,
 } from "../../splitChatStore";
+import { writeSplitWorkspace } from "../../splitChatWorkspaceStorage";
 import { buildThreadRouteParams, type ThreadRouteTarget } from "../../threadRoutes";
 import { ThreadRouteView } from "../ThreadRouteView";
 import { Button } from "../ui/button";
@@ -42,6 +43,8 @@ import {
 interface SplitChatWorkspaceProps {
   readonly primaryTarget: ThreadRouteTarget | null;
   readonly modalOpen: boolean;
+  readonly initialMaximizedPane?: number | null;
+  readonly onLayoutReady?: () => void;
 }
 
 // Stays the draft's key after promotion so the pane keeps its ChatView mounted.
@@ -77,6 +80,8 @@ function distinctPanes(all: readonly ThreadRouteTarget[], groups: SplitChatTabGr
 export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   primaryTarget,
   modalOpen,
+  initialMaximizedPane = null,
+  onLayoutReady,
 }: SplitChatWorkspaceProps) {
   const navigate = useNavigate();
   const workspaceId = useId();
@@ -94,7 +99,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     rightColumnRatio,
     resizeLayout,
   } = store;
-  const [maximizedPaneIndex, setMaximizedPaneIndex] = useState<number | null>(null);
+  const [maximizedPaneIndex, setMaximizedPaneIndex] = useState<number | null>(initialMaximizedPane);
   const containerRef = useRef<HTMLDivElement>(null);
   const sourceRef = useRef<ThreadRouteTarget | null>(null);
   const focusTargetRef = useRef<{ key: string; tab?: boolean } | null>(null);
@@ -119,6 +124,25 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
       ? maximizedPaneIndex
       : null;
   const activeIndex = Math.min(activePaneIndex, count - 1);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- records the latest visible workspace so quit does not need a final async write
+  useEffect(() => {
+    const primary = panes[0];
+    if (!primary) return;
+    writeSplitWorkspace({
+      primary,
+      secondary: panes.slice(1),
+      groups: tabGroups.filter((group) =>
+        panes.some((pane) => tabsForPane(tabGroups, pane) === group),
+      ),
+      activeIndex: Math.max(0, activeIndex),
+      maximizedIndex: maximized,
+    });
+  }, [panes, tabGroups, activeIndex, maximized]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- consumes the startup maximize setting once
+  useEffect(() => {
+    if (initialMaximizedPane !== null) onLayoutReady?.();
+  }, [initialMaximizedPane, onLayoutReady]);
+
   if (maximized !== null && maximized !== activeIndex) setMaximizedPaneIndex(null);
   const columns = count === 4 && resizeLayout === "columns";
   const x = "var(--split-x)";
@@ -221,7 +245,13 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
       );
       return;
     }
-    if (current.length < 2) return;
+    if (current.length < 2) {
+      if (focusTab) {
+        writeSplitWorkspace(null);
+        void navigate({ to: "/" });
+      }
+      return;
+    }
     setMaximizedPaneIndex((value) =>
       value === null || value === index ? null : value > index ? value - 1 : value,
     );
@@ -277,7 +307,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     if (header && point.y <= header.bottom) {
       const buttons = Array.from(strip!.querySelectorAll<HTMLElement>("[data-split-chat-tab]"));
       const before = buttons.findIndex((tab) => {
-        const box = tab.getBoundingClientRect();
+        const box = (tab.parentElement ?? tab).getBoundingClientRect();
         return point.x < box.left + box.width / 2;
       });
       const tabIndex = before < 0 ? buttons.length : before;
@@ -562,8 +592,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                             panelId,
                             selected: threadTargetKey(tab) === activeTabKey,
                             onSelect: () => selectTab(index, tab),
-                            onClose:
-                              tabs.length > 1 ? () => close(threadTargetKey(tab), true) : undefined,
+                            onClose: () => close(threadTargetKey(tab), true),
                           }}
                           onMoveByKeyboard={(direction) =>
                             selectTab(
@@ -582,16 +611,6 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                       </Fragment>
                     ))}
                   </div>
-                  {tabs.length > 1 ? (
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label="Close active chat tab"
-                      onClick={() => close(activeTabKey, true)}
-                    >
-                      <X />
-                    </Button>
-                  ) : null}
                 </div>
                 <SplitChatPaneControlsContext
                   value={
@@ -666,16 +685,6 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                                   : "Maximize this chat"}
                               </TooltipPopup>
                             </Tooltip>
-                            {tabs.length === 1 ? (
-                              <Button
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label="Close chat pane"
-                                onClick={() => close(activeTabKey)}
-                              >
-                                <X />
-                              </Button>
-                            ) : null}
                           </>
                         ) : null}
                       </div>

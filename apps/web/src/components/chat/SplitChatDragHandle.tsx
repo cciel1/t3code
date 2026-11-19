@@ -1,10 +1,36 @@
-import { GripVertical } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import { GripVertical, MessageSquare, X } from "lucide-react";
 import { useRef } from "react";
 
+import { cn } from "../../lib/utils";
+import { providersIgnoringCheckedAtAtom } from "../../state/server";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { Button } from "../ui/button";
 import { useQuietThreadShell } from "../../state/entities";
 import type { ThreadRouteTarget } from "../../threadRoutes";
+
+function ChatTabProvider({
+  environmentId,
+  instanceId,
+}: {
+  environmentId: EnvironmentId;
+  instanceId: ProviderInstanceId;
+}) {
+  const providers = useAtomValue(providersIgnoringCheckedAtAtom(environmentId));
+  const provider = providers.find((entry) => entry.instanceId === instanceId);
+  return provider ? (
+    <ProviderInstanceIcon
+      driverKind={provider.driver}
+      displayName={provider.displayName ?? provider.driver}
+      size="compact"
+      iconClassName="size-3.5"
+    />
+  ) : (
+    <MessageSquare className="size-3.5 shrink-0" />
+  );
+}
 
 export function SplitChatDragHandle({
   target,
@@ -39,10 +65,10 @@ export function SplitChatDragHandle({
     if (node) return () => cleanupRef.current?.();
   });
 
-  return (
+  const handle = (
     <Button
       ref={handleRef}
-      variant={tab?.selected ? "secondary" : "ghost"}
+      variant="ghost"
       size={tab ? "xs" : "icon-xs"}
       role={tab ? "tab" : undefined}
       id={tab?.id}
@@ -52,7 +78,7 @@ export function SplitChatDragHandle({
       tabIndex={tab ? (tab.selected ? 0 : -1) : undefined}
       aria-label={tab ? title : "Drag chat to rearrange"}
       title={tab ? title : "Drag chat to rearrange. Use the arrow keys to move it."}
-      className={tab ? "h-6 max-w-48 shrink-0 cursor-grab" : undefined}
+      className={tab ? "h-full min-w-0 flex-1 cursor-grab" : undefined}
       onClick={(event) => {
         if (tab && (!dragged.current || event.detail === 0)) {
           event.currentTarget.focus({ preventScroll: true });
@@ -138,7 +164,49 @@ export function SplitChatDragHandle({
         handle.addEventListener("lostpointercapture", cancel);
       }}
     >
-      {tab ? <span className="truncate">{title}</span> : <GripVertical />}
+      {tab ? (
+        <>
+          <span aria-hidden="true" className="inline-flex shrink-0 items-center">
+            {thread ? (
+              <ChatTabProvider
+                environmentId={thread.environmentId}
+                instanceId={thread.providerInstanceId}
+              />
+            ) : (
+              <MessageSquare className="size-3.5 shrink-0" />
+            )}
+          </span>
+          <span className="truncate">{title}</span>
+        </>
+      ) : (
+        <GripVertical />
+      )}
     </Button>
+  );
+
+  if (!tab) return handle;
+  return (
+    <div
+      role="presentation"
+      className={cn(
+        "flex h-6 max-w-56 shrink-0 items-center rounded-sm",
+        tab.selected ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50",
+      )}
+    >
+      {handle}
+      {tab.onClose ? (
+        <button
+          type="button"
+          aria-label={`Close chat tab ${title}`}
+          title={`Close ${title}`}
+          tabIndex={-1}
+          className="mr-0.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground outline-hidden hover:bg-foreground/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={tab.onClose}
+        >
+          <X className="size-3" aria-hidden="true" />
+        </button>
+      ) : null}
+    </div>
   );
 }

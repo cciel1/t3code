@@ -2714,6 +2714,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               if (!opened)
                 toastManager.add({ type: "error", title: "Could not open thread window" });
             } else {
+              url.searchParams.set("threadWindow", "1");
               window.open(url.href, "_blank", "popup,noopener,noreferrer,width=1000,height=780");
             }
             return;

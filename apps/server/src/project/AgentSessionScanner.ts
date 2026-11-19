@@ -237,6 +237,7 @@ export class AgentSessionScanner extends Context.Service<
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
+      refreshSources?: ReadonlyArray<AgentSessionImportSource>,
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
@@ -1984,6 +1985,7 @@ export const make = Effect.gen(function* () {
   const prepareRecentThreads = Effect.fn("AgentSessionScanner.prepareRecentThreads")(function* (
     workspaceRoot: string,
     completedSources: ReadonlyArray<AgentSessionImportSource>,
+    refreshSources: ReadonlyArray<AgentSessionImportSource>,
   ) {
     const root = path.resolve(expandHomePath(workspaceRoot, homeDir));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
@@ -1996,7 +1998,25 @@ export const make = Effect.gen(function* () {
     if (cachedCandidates === null || cachedCandidates.metadataTruncated) {
       cachedCandidates = yield* collectCandidates();
     }
-    const { candidates } = cachedCandidates;
+    const matchesRefreshSource = (candidate: RawCandidate, filePath: string) =>
+      refreshSources.some(
+        (source) =>
+          source.provider === candidate.source &&
+          source.providerInstanceId === candidate.providerInstanceId &&
+          (source.filePath === filePath ||
+            path
+              .basename(filePath)
+              .replace(/\.jsonl(?:\.zst)?$/, "")
+              .endsWith(source.providerSessionId)),
+      );
+    const allCandidates = cachedCandidates.candidates;
+    const candidates = refreshSources.length
+      ? allCandidates.filter((candidate) =>
+          candidate.transcripts.some((transcript) =>
+            matchesRefreshSource(candidate, transcript.filePath),
+          ),
+        )
+      : allCandidates;
 
     // The scan counts a linked worktree's sessions toward its main checkout, so import them with it.
     const candidateDirectories = candidates.flatMap((candidate) => {
@@ -2050,8 +2070,9 @@ export const make = Effect.gen(function* () {
       for (const transcript of candidate.transcripts) {
         if (
           transcript.mtimeMs === null ||
-          transcript.mtimeMs < cutoffMs ||
-          transcript.mtimeMs > nowMs
+          (refreshSources.length
+            ? !matchesRefreshSource(candidate, transcript.filePath)
+            : transcript.mtimeMs < cutoffMs || transcript.mtimeMs > nowMs)
         ) {
           continue;
         }
@@ -2082,7 +2103,7 @@ export const make = Effect.gen(function* () {
       let paths = codexRolloutPaths.get(providerInstanceId);
       if (paths === undefined) {
         paths = new Map(
-          candidates.flatMap((candidate) =>
+          allCandidates.flatMap((candidate) =>
             candidate.source === "codex" && candidate.providerInstanceId === providerInstanceId
               ? candidate.transcripts.flatMap((transcript) => {
                   const match = CODEX_ROLLOUT_ID_PATTERN.exec(transcript.filePath);
@@ -2199,7 +2220,7 @@ export const make = Effect.gen(function* () {
                   ? COMPRESSED_TRANSCRIPT_SUFFIX
                   : ".jsonl",
               ),
-              lastActiveAtMs: transcript.mtimeMs,
+              lastActiveAtMs: identity.mtimeMs ?? transcript.mtimeMs,
             },
             inheritedRecords === null
               ? snapshot.records
@@ -2234,6 +2255,15 @@ export const make = Effect.gen(function* () {
             providerInstanceId: parsedThread.providerInstanceId,
             providerSessionId: parsedThread.providerSessionId,
           };
+          if (
+            refreshSources.length &&
+            !refreshSources.some(
+              (previous) =>
+                previous.providerInstanceId === source.providerInstanceId &&
+                previous.providerSessionId === source.providerSessionId,
+            )
+          )
+            return Option.none<AgentSessionRecentThread>();
           const sessionKey = `${parsedThread.providerInstanceId}\0${parsedThread.providerSessionId}`;
           if (importedSessions.has(sessionKey)) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Duplicate", source });
@@ -2256,7 +2286,8 @@ export const make = Effect.gen(function* () {
   const recentThreads: AgentSessionScanner["Service"]["recentThreads"] = (
     workspaceRoot,
     completedSources = [],
-  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
+    refreshSources = [],
+  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources, refreshSources));
 
   return AgentSessionScanner.of({ scan, recentThreads });
 });

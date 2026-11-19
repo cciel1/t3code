@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex", "pi"]);
@@ -87,5 +93,28 @@ export class AgentSessionScanError extends Schema.TaggedError<AgentSessionScanEr
 ) {
   override get message(): string {
     return `Failed to scan agent sessions during ${this.operation}.`;
+  }
+}
+
+export const AgentSessionRefreshInput = Schema.Struct({ threadId: ThreadId });
+export const AgentSessionRefreshResult = Schema.Struct({
+  status: Schema.Literals([
+    "updated",
+    "unchanged",
+    "source-missing",
+    "unsupported",
+    "busy",
+    "diverged",
+  ]),
+  addedCount: NonNegativeInt,
+});
+export type AgentSessionRefreshResult = typeof AgentSessionRefreshResult.Type;
+
+export class AgentSessionRefreshError extends Schema.TaggedError<AgentSessionRefreshError>()(
+  "AgentSessionRefreshError",
+  { threadId: ThreadId },
+) {
+  override get message(): string {
+    return "Could not update this chat from its original session.";
   }
 }

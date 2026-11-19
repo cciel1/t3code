@@ -7,6 +7,7 @@ import {
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
   AgentSessionScanError,
+  AgentSessionRefreshError,
   AgentSessionSource,
   EventId,
   MessageId,
@@ -16,6 +17,7 @@ import {
   TurnItemId,
   type AgentSessionImportInput,
   type AgentSessionImportResult,
+  type AgentSessionRefreshResult,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -193,6 +195,35 @@ function messageEvents(input: {
     turnItemEvent(turnItem),
   ];
 }
+
+function nextTranscriptMessages(
+  stored: readonly OrchestrationV2ConversationMessage[],
+  source: AgentSessionScanner.AgentSessionThread,
+) {
+  const matches = (
+    left: OrchestrationV2ConversationMessage,
+    right: AgentSessionScanner.AgentSessionThreadMessage | undefined,
+  ) => left.role === right?.role && left.text === right.text;
+  const incoming = source.messages;
+  if (stored.every((message, index) => matches(message, incoming[index]))) {
+    return incoming.slice(stored.length);
+  }
+  if (source.omittedMessageCount === 0 || stored.length < 3 || !matches(stored[0]!, incoming[0])) {
+    return null;
+  }
+  // A long transcript keeps its first user message and most recent tail. When that
+  // tail shifts, demand a unique contiguous match before adding newer messages.
+  const anchor = stored.slice(-Math.min(8, stored.length - 1));
+  const starts = incoming.flatMap((_, index) =>
+    index > 0 && anchor.every((message, offset) => matches(message, incoming[index + offset]))
+      ? [index]
+      : [],
+  );
+  return starts.length === 1 ? incoming.slice(starts[0]! + anchor.length) : null;
+}
+
+const refreshStatus = (status: AgentSessionRefreshResult["status"], addedCount = 0) =>
+  ({ status, addedCount }) satisfies AgentSessionRefreshResult;
 
 const make = Effect.gen(function* () {
   const scanner = yield* AgentSessionScanner.AgentSessionScanner;
@@ -596,7 +627,85 @@ const make = Effect.gen(function* () {
     return yield* commit(messages);
   });
 
-  return { importRecentAgentThreads, importNativeHistory };
+  const refreshImportedThread = Effect.fn("refreshImportedThread")(
+    function* (threadId: ThreadId) {
+      const { thread } = yield* orchestrator.getThreadRecords(threadId, []);
+      if (
+        thread.deletedAt !== null ||
+        thread.historyOrigin !== "v1_import" ||
+        !threadId.startsWith("import:")
+      ) {
+        return refreshStatus("unsupported");
+      }
+      const runtime = Option.getOrUndefined(yield* runtimes.getByThreadId({ threadId }));
+      const imported = AgentSessionScanner.decodeImportedTranscriptPayload(runtime?.runtimePayload)
+        .pipe(
+          Option.flatMapNullishOr((payload) => payload.importedTranscripts),
+          Option.getOrElse(() => []),
+        )
+        .filter(
+          (origin) =>
+            `import:${origin.providerInstanceId}:${origin.providerSessionId}` === threadId,
+        );
+      if (!imported.length) return refreshStatus("unsupported");
+      const project = Option.getOrUndefined(yield* projects.getById(thread.projectId));
+      if (!project) return refreshStatus("source-missing");
+      const found = yield* scanner.recentThreads(project.workspaceRoot, [], imported).pipe(
+        Stream.filter((candidate) => candidate._tag === "Importable"),
+        Stream.filter(
+          ({ source }) =>
+            `import:${source.providerInstanceId}:${source.providerSessionId}` === threadId,
+        ),
+        Stream.runHead,
+      );
+      if (Option.isNone(found)) return refreshStatus("source-missing");
+      const { source, thread: snapshot } = found.value;
+      return yield* threadCommands.withLock(
+        threadId,
+        Effect.gen(function* () {
+          const current = yield* orchestrator.getThreadRecords(threadId, ["messages", "runs"]);
+          if (
+            current.thread.deletedAt !== null ||
+            current.thread.historyOrigin !== "v1_import" ||
+            current.thread.projectId !== thread.projectId
+          )
+            return refreshStatus("unsupported");
+          if (
+            current.runs.some((run) =>
+              ["preparing", "queued", "starting", "running", "waiting"].includes(run.status),
+            )
+          ) {
+            return refreshStatus("busy");
+          }
+          const existing = current.messages.filter(
+            (message) => message.role === "user" || message.role === "assistant",
+          );
+          if (existing.length === 0) return refreshStatus("diverged");
+          const additions = nextTranscriptMessages(existing, snapshot);
+          if (additions === null) return refreshStatus("diverged");
+          if (!additions.length) return refreshStatus("unchanged");
+          // Reuse the import ID sequence so a retry cannot append a second copy.
+          yield* eventSink.write({
+            events: additions.flatMap((message, index) =>
+              messageEvents({ threadId, index: existing.length + index, message }),
+            ),
+          });
+          yield* runtimes.recordImportedTranscript({ threadId, source });
+          return refreshStatus("updated", additions.length);
+        }),
+      );
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("Could not refresh imported transcript", { threadId, cause }).pipe(
+            Effect.andThen(Effect.fail(new AgentSessionRefreshError({ threadId }))),
+          ),
+        ),
+      ),
+  );
+
+  return { importRecentAgentThreads, importNativeHistory, refreshImportedThread };
 });
 
 type AgentSessionImporterShape = Effect.Success<typeof make>;

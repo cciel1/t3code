@@ -10,7 +10,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon } from "lucide-react";
+import { ChevronDownIcon, RefreshCwIcon } from "lucide-react";
 import {
   memo,
   use,
@@ -21,6 +21,9 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
+import { Button } from "../ui/button";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { agentSessionRefresh } from "../../state/agentSessions";
 import { Badge } from "../ui/badge";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -69,6 +72,66 @@ function resolveRenameCommit(input: {
   if (trimmed.length === 0) return { action: "reject-empty" };
   if (trimmed === input.originalTitle) return { action: "noop" };
   return { action: "commit", title: trimmed };
+}
+
+function RefreshImportedChat({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const refresh = useAtomCommand(agentSessionRefresh, { reportFailure: false });
+  const [pending, setPending] = useState(false);
+  const pendingRef = useRef(false);
+
+  async function update() {
+    if (pendingRef.current) return;
+    pendingRef.current = true;
+    setPending(true);
+    try {
+      const result = await refresh({
+        environmentId: threadRef.environmentId,
+        input: { threadId: threadRef.threadId },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add({ type: "error", title: "Could not update the conversation" });
+        }
+        return;
+      }
+      const { status, addedCount } = result.value;
+      const titles = {
+        updated: `Added ${addedCount} ${addedCount === 1 ? "message" : "messages"}`,
+        unchanged: "Conversation is already up to date",
+        "source-missing": "The original session could not be found on this machine",
+        unsupported: "This chat has no linked imported session",
+        busy: "Wait for this chat to finish running, then try again",
+        diverged: "The original history no longer matches this conversation",
+      };
+      toastManager.add({ type: status === "updated" ? "success" : "info", title: titles[status] });
+    } finally {
+      pendingRef.current = false;
+      setPending(false);
+    }
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label="Update conversation from original session"
+            aria-busy={pending}
+            disabled={pending}
+            onClick={() => void update()}
+          >
+            <RefreshCwIcon
+              aria-hidden="true"
+              className={pending ? "animate-spin motion-reduce:animate-none" : undefined}
+            />
+          </Button>
+        }
+      />
+      <TooltipPopup>Update conversation from original session</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -402,6 +465,12 @@ export const ChatHeader = memo(function ChatHeader({
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
       {isServerThread ? <GuestShareIndicator threadRef={activeThreadRef} /> : null}
+      {isServerThread && canOperateThread && activeThreadId.startsWith("import:") ? (
+        <RefreshImportedChat
+          key={`${activeThreadEnvironmentId}:${activeThreadId}`}
+          threadRef={activeThreadRef}
+        />
+      ) : null}
       {paneControls}
     </div>
   );

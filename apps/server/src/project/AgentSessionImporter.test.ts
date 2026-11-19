@@ -280,6 +280,7 @@ const makeImporter = Effect.fn(function* (
   return {
     run: importer.importRecentAgentThreads({ projectId }),
     importNativeHistory: importer.importNativeHistory,
+    refresh: importer.refreshImportedThread,
     published,
   };
 });
@@ -540,6 +541,40 @@ it.effect("counts only new threads when re-importing cached and recovered transc
     ).toMatchObject({
       runtimePayload: { importedTranscripts: [recovered.source, duplicate] },
     });
+  }).pipe(Effect.scoped, Effect.provide(persistence)),
+);
+
+it.effect("appends newer imported messages once and keeps divergent conversation history", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const original = candidate(CODEX_MODEL_SELECTION, "refresh");
+    const threadId = importId(original);
+    const initial = yield* makeImporter([original]);
+    expect(yield* initial.run).toEqual({ importedCount: 1, skippedCount: 0 });
+    const newer = {
+      ...original,
+      source: { ...original.source, size: original.source.size + 100 },
+      thread: {
+        ...original.thread,
+        messages: [
+          ...original.thread.messages,
+          { role: "user" as const, text: "Follow-up from the editor", createdAt: timestamp },
+          { role: "assistant" as const, text: "Editor reply", createdAt: timestamp },
+        ],
+      },
+    };
+    const update = yield* makeImporter([newer]);
+    expect(yield* update.refresh(threadId)).toEqual({ status: "updated", addedCount: 2 });
+    expect(yield* update.refresh(threadId)).toEqual({ status: "unchanged", addedCount: 0 });
+    const conflict = yield* makeImporter([original]);
+    expect(yield* conflict.refresh(threadId)).toEqual({ status: "diverged", addedCount: 0 });
+    const result = yield* projections.getThreadRecords(threadId, ["messages", "turnItems"]);
+    expect(result.messages.map((message) => message.text)).toEqual([
+      ...original.thread.messages.map((message) => message.text),
+      "Follow-up from the editor",
+      "Editor reply",
+    ]);
+    expect(result.turnItems).toHaveLength(result.messages.length);
   }).pipe(Effect.scoped, Effect.provide(persistence)),
 );
 
