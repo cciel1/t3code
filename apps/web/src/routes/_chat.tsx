@@ -11,6 +11,7 @@ import { useLayoutEffect, useState } from "react";
 import { readSplitWorkspace } from "../splitChatWorkspaceStorage";
 import { threadTargetKey, useSplitChatStore } from "../splitChatStore";
 import { SplitChatWorkspace } from "../components/chat/SplitChatWorkspace";
+import { GlobalVoiceInputIndicator } from "../components/chat/GlobalVoiceInputIndicator";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
 import { SidebarInset } from "../components/ui/sidebar";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
@@ -82,6 +83,7 @@ function ChatRouteLayout() {
         <Outlet />
       )}
       {modalOpen ? <Outlet /> : null}
+      <GlobalVoiceInputIndicator hidden={modalOpen} />
     </>
   );
 }

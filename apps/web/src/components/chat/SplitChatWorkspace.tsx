@@ -1,5 +1,6 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useNavigate, useRouter } from "@tanstack/react-router";
+import { msg, useGT, useMessages } from "gt-react";
 import { Maximize2, Minimize2 } from "lucide-react";
 import {
   Fragment,
@@ -16,6 +17,7 @@ import "./SplitChatWorkspace.css";
 
 import { ComposerHandleContext, useComposerHandleContext } from "../../composerHandleContext";
 import { isElectron } from "../../env";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { usePanelAnimationSettings } from "../../panelAnimations";
 import { cn } from "../../lib/utils";
 import {
@@ -138,16 +140,16 @@ function splitPreviewRect(rect: NormalizedRect, edge: SplitEdge): NormalizedRect
   }
 }
 
-function splitEdgeLabel(edge: SplitEdge): string {
+function splitEdgeLabel(edge: SplitEdge, resolve: MessageResolver = m): string {
   switch (edge) {
     case "left":
-      return "Split left";
+      return resolve(msg("Split left"));
     case "right":
-      return "Split right";
+      return resolve(msg("Split right"));
     case "top":
-      return "Split top";
+      return resolve(msg("Split top"));
     case "bottom":
-      return "Split bottom";
+      return resolve(msg("Split bottom"));
   }
 }
 
@@ -164,6 +166,8 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   initialMaximizedPane = null,
   onLayoutReady,
 }: SplitChatWorkspaceProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigate = useNavigate();
   const router = useRouter();
   const workspaceId = useId();
@@ -341,7 +345,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     if (window.desktopBridge?.openThreadWindow) {
       opened = await window.desktopBridge.openThreadWindow(pathname).catch(() => false);
       if (!opened) {
-        toastManager.add({ type: "error", title: "Could not open thread window" });
+        toastManager.add({ type: "error", title: gt("Could not open thread window") });
       }
     } else {
       url.searchParams.set("threadWindow", "1");
@@ -626,9 +630,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
     if (!pane) return;
     focusTargetRef.current = null;
     const handle = pane.querySelector<HTMLElement>(
-      key.tab
-        ? '[data-split-chat-tab][aria-selected="true"]'
-        : '[aria-label="Drag chat to rearrange"]',
+      key.tab ? '[data-split-chat-tab][aria-selected="true"]' : "[data-split-chat-drag-handle]",
     );
     if (key.tab) handle?.scrollIntoView({ block: "nearest", inline: "nearest" });
     (handle ?? pane).focus({ preventScroll: true });
@@ -653,11 +655,11 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
   const dropPreviewLabel = (() => {
     if (!dropZone || dropZone.mode === "tab") return null;
     if (dropZone.mode === "blocked") {
-      return `Open up to ${MAX_SPLIT_CHATS} panes. Drag one chat at a time.`;
+      return gt("Open up to {max} panes. Drag one chat at a time.", { max: MAX_SPLIT_CHATS });
     }
-    if (dropZone.mode === "swap") return "Swap chats";
-    if (dropZone.mode === "center-tab") return "Add as tab";
-    return splitEdgeLabel(dropZone.edge);
+    if (dropZone.mode === "swap") return gt("Swap chats");
+    if (dropZone.mode === "center-tab") return gt("Add as tab");
+    return splitEdgeLabel(dropZone.edge, messages);
   })();
 
   return (
@@ -744,7 +746,7 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                 >
                   <div
                     role="tablist"
-                    aria-label={`Chats in pane ${index + 1}`}
+                    aria-label={gt("Chats in pane {index}", { index: index + 1 })}
                     className="flex h-full max-w-full min-w-0 shrink items-center gap-0.5 overflow-x-auto overflow-y-hidden px-0.5 [scrollbar-width:none]"
                   >
                     {tabs.map((tab, tabIndex) => (
@@ -809,8 +811,8 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                                 size="icon-xs"
                                 aria-label={
                                   maximized === index
-                                    ? "Restore split layout"
-                                    : "Maximize chat pane"
+                                    ? gt("Restore split layout")
+                                    : gt("Maximize chat pane")
                                 }
                                 onClick={() => {
                                   store.setActivePane(index);
@@ -822,7 +824,9 @@ export const SplitChatWorkspace = memo(function SplitChatWorkspace({
                             }
                           />
                           <TooltipPopup>
-                            {maximized === index ? "Restore split layout" : "Maximize this chat"}
+                            {maximized === index
+                              ? gt("Restore split layout")
+                              : gt("Maximize this chat")}
                           </TooltipPopup>
                         </Tooltip>
                       </div>

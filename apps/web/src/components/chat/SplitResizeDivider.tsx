@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { memo, type CSSProperties, useRef } from "react";
 
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -40,6 +41,7 @@ export const SplitResizeDivider = memo(function SplitResizeDivider({
   onCancel,
   style,
 }: SplitResizeDividerProps) {
+  const gt = useGT();
   const vertical = orientation === "vertical";
   const currentPosition = position ?? ratio ?? 0.5;
   const handleRef = useRef<HTMLDivElement | null>(null);
@@ -116,7 +118,7 @@ export const SplitResizeDivider = memo(function SplitResizeDivider({
       ref={attach}
       role="separator"
       aria-orientation={orientation}
-      aria-label={vertical ? "Resize chat columns" : "Resize chat rows"}
+      aria-label={vertical ? gt("Resize chat columns") : gt("Resize chat rows")}
       aria-valuemin={Math.round((minPosition ?? 0.15) * 100)}
       aria-valuemax={Math.round((maxPosition ?? 0.85) * 100)}
       aria-valuenow={Math.round(currentPosition * 100)}

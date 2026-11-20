@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { ExternalLinkIcon, MessagesSquareIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 
@@ -31,7 +32,7 @@ export function ThreadContextDragGhost() {
       <span className="truncate">{ghost.title}</span>
       {ghost.detach ? (
         <span className="shrink-0 rounded-full bg-primary/15 px-1.5 text-xs text-primary">
-          New window
+          <T>New window</T>
         </span>
       ) : ghost.count > 1 ? (
         <span className="shrink-0 rounded-full bg-muted px-1.5 text-xs text-secondary-label">

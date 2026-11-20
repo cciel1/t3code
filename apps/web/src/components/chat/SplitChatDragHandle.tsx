@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { GripVertical, MessageSquare, X } from "lucide-react";
 import { useRef } from "react";
 
@@ -54,8 +55,9 @@ export function SplitChatDragHandle({
     readonly panelId: string;
   };
 }) {
+  const gt = useGT();
   const thread = useQuietThreadShell(target.kind === "server" ? target.threadRef : null);
-  const title = thread?.title || "New thread";
+  const title = thread?.title || gt("New thread");
   const dragged = useRef(false);
   const cleanupRef = useRef<(() => void) | null>(null);
   const move = useStableCallback(onMove);
@@ -74,10 +76,11 @@ export function SplitChatDragHandle({
       id={tab?.id}
       aria-controls={tab?.panelId}
       data-split-chat-tab={tab?.key}
+      data-split-chat-drag-handle={tab ? undefined : ""}
       aria-selected={tab?.selected}
       tabIndex={tab ? (tab.selected ? 0 : -1) : undefined}
-      aria-label={tab ? title : "Drag chat to rearrange"}
-      title={tab ? title : "Drag chat to rearrange. Use the arrow keys to move it."}
+      aria-label={tab ? title : gt("Drag chat to rearrange")}
+      title={tab ? title : gt("Drag chat to rearrange. Use the arrow keys to move it.")}
       className={
         tab
           ? "h-full min-w-0 flex-1 cursor-grab [-webkit-app-region:no-drag]"
@@ -201,7 +204,7 @@ export function SplitChatDragHandle({
       {tab.onClose ? (
         <button
           type="button"
-          aria-label={`Close chat tab ${title}`}
+          aria-label={gt("Close chat tab {title}", { title })}
           tabIndex={-1}
           className="mr-0.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground outline-hidden [-webkit-app-region:no-drag] hover:bg-foreground/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           onPointerDown={(event) => event.stopPropagation()}

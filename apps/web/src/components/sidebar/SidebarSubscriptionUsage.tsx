@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { collectLimitAccounts, collectLimitPools } from "@t3tools/shared/usageLimits";
 import { Link } from "@tanstack/react-router";
+import { T, useGT, Var } from "gt-react";
 import { memo } from "react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
@@ -29,6 +30,7 @@ const PROVIDERS = [
 const RING_LENGTH = 100;
 
 export const SidebarSubscriptionUsage = memo(function SidebarSubscriptionUsage() {
+  const gt = useGT();
   const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
   const now = Date.parse(`${useNowMinute()}Z`);
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
@@ -62,7 +64,7 @@ export const SidebarSubscriptionUsage = memo(function SidebarSubscriptionUsage()
   return (
     <div
       role="group"
-      aria-label="Subscription usage"
+      aria-label={gt("Subscription usage")}
       className="flex items-center gap-1 group-data-[collapsible=icon]:hidden"
     >
       {PROVIDERS.map(({ driver, name, logo: Logo, color }) => {
@@ -97,7 +99,7 @@ export const SidebarSubscriptionUsage = memo(function SidebarSubscriptionUsage()
                 <Link
                   to="/usage"
                   onClick={() => isMobile && setOpenMobile(false)}
-                  aria-label={`${name} subscription usage`}
+                  aria-label={gt("{name} subscription usage", { name })}
                   className="relative grid size-9 place-items-center rounded-md outline-hidden hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring pointer-coarse:size-11"
                 />
               }
@@ -134,8 +136,9 @@ export const SidebarSubscriptionUsage = memo(function SidebarSubscriptionUsage()
             <TooltipPopup side="top" align="start" className="max-w-[min(19rem,90vw)]">
               <div className="space-y-2 py-1">
                 <div className="font-medium text-foreground">
-                  {name}
-                  {pool && pool.accounts.length > 1 ? ` · ${pool.accounts.length} accounts` : ""}
+                  {pool && pool.accounts.length > 1
+                    ? gt("{name} · {count} accounts", { name, count: pool.accounts.length })
+                    : name}
                 </div>
                 {windows.length > 0 ? (
                   <ul className="space-y-1.5">
@@ -147,16 +150,31 @@ export const SidebarSubscriptionUsage = memo(function SidebarSubscriptionUsage()
                           <div className="flex justify-between gap-4 text-foreground">
                             <span>{window.label}</span>
                             <span className="shrink-0 tabular-nums">
-                              {window.remainingPercent}% left
+                              <T>
+                                <Var>{window.remainingPercent}</Var>% left
+                              </T>
                             </span>
                           </div>
                           <div className="text-muted-foreground">
-                            {needsRefresh && "Last reported · "}
                             {nextReset
-                              ? `Resets ${formatUpcomingTimestamp(new Date(nextReset.at).toISOString(), timestampFormat, now)}`
+                              ? needsRefresh
+                                ? gt("Last reported · Resets {time}", {
+                                    time: formatUpcomingTimestamp(
+                                      new Date(nextReset.at).toISOString(),
+                                      timestampFormat,
+                                      now,
+                                    ),
+                                  })
+                                : gt("Resets {time}", {
+                                    time: formatUpcomingTimestamp(
+                                      new Date(nextReset.at).toISOString(),
+                                      timestampFormat,
+                                      now,
+                                    ),
+                                  })
                               : needsRefresh
-                                ? "Reset time passed"
-                                : "Reset time unavailable"}
+                                ? gt("Last reported · Reset time passed")
+                                : gt("Reset time unavailable")}
                           </div>
                         </li>
                       );
@@ -166,8 +184,10 @@ export const SidebarSubscriptionUsage = memo(function SidebarSubscriptionUsage()
                   <p className="text-muted-foreground">
                     {unavailable ??
                       (driver === "antigravity"
-                        ? "Antigravity did not report Gemini limits. Quota availability depends on the runtime and sign-in method."
-                        : "No subscription limits reported.")}
+                        ? gt(
+                            "Antigravity did not report Gemini limits. Quota availability depends on the runtime and sign-in method.",
+                          )
+                        : gt("No subscription limits reported."))}
                   </p>
                 )}
               </div>
